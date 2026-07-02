@@ -1,80 +1,243 @@
 # SmartERP AI
 
-Plateforme SaaS d'Analytics Décisionnel dotée d'un Agent IA, conçue pour l'ERP Odoo 17.
+Plateforme SaaS d’Analytics Décisionnel augmentée par un Agent IA pour l’écosystème Odoo.
 
-Connexion en lecture via API Odoo (Ventes, CRM, Stock) sans altérer l'installation existante du client. Tableau de bord temps réel (10 KPIs clés + alertes) et Agent IA conversationnel en français pour interroger les données métier en langage naturel.
+SmartERP AI se connecte à Odoo en lecture seule afin d’exploiter les données métier (Ventes, CRM, Stock…) et fournir :
 
-## Contexte
+- Dashboard temps réel (KPIs)
+- Alertes et indicateurs décisionnels
+- Agent IA conversationnel (questions métier en langage naturel)
+- Interface web moderne
 
-Projet de Fin d'Année — MGSI S8 — Équipe de 3 étudiants, en partenariat avec UrikaCloud.
+Projet académique réalisé dans le cadre du PFA — MGSI S8 — en partenariat avec UrikaCloud.
 
-## Stack technique
+---
 
-| Couche         | Technologie          |
-|----------------|-----------------------|
-| Frontend       | Next.js 14 (App Router) |
-| Styles         | Tailwind CSS          |
-| Graphiques     | Recharts              |
-| Backend / API  | FastAPI (Python)      |
-| Base de données| PostgreSQL            |
-| Agent IA       | Groq API — LLaMA 3.3   |
-| Déploiement    | Docker Compose         |
+# Objectifs du projet
 
-## Architecture (vue d'ensemble)
+Construire une couche d’intelligence au-dessus d’Odoo sans modifier l’installation du client.
 
+Fonctionnalités prévues :
+
+- Connexion Odoo via API
+- Extraction des données métier
+- Stockage analytique
+- Dashboard décisionnel
+- Agent IA conversationnel
+- Visualisation des KPIs
+
+---
+
+# Stack technique
+
+| Couche | Technologie |
+|---|---|
+| Frontend | Next.js 16 + TypeScript |
+| UI | Tailwind CSS |
+| State Management | Zustand |
+| Data Fetching | React Query |
+| Charts | Recharts |
+| Backend | FastAPI |
+| Base de données | PostgreSQL |
+| ERP | Odoo 17 |
+| IA | Groq API + LLaMA |
+| Conteneurisation | Docker |
+| Orchestration | Docker Compose |
+| Versioning | Git + GitHub |
+
+---
+
+# Architecture
+
+```text
+Odoo 17
+(API XML-RPC / JSON-RPC)
+        │
+        ▼
+Backend FastAPI
+(ETL + Analytics)
+        │
+        ▼
+PostgreSQL
+(Cache + KPIs)
+        │
+        ├────────► Agent IA (Groq / LLaMA)
+        │
+        ▼
+Frontend Next.js
+(Dashboard + Chat)
 ```
-Odoo 17 (client) --API XML-RPC/JSON-RPC--> Backend FastAPI --> PostgreSQL (cache/analytics)
-                                                |
-                                                v
-                                         Agent IA (Groq/LLaMA 3.3)
-                                                |
-                                                v
-                                    Frontend Next.js (Dashboard + Chat)
+
+Documentation complète :
+
+```text
+docs/architecture.md
 ```
 
-Détails complets dans [`docs/architecture.md`](docs/architecture.md).
+---
 
-## Structure du repo
+# Structure du projet
 
-```
+```text
 smarterp-ai/
-├── frontend/          # Application Next.js 14
-├── backend/           # API FastAPI + logique métier + connecteur Odoo
-├── docs/              # Documentation technique et fonctionnelle
-├── docker-compose.yml # Orchestration des services (dev)
-├── .env.example        # Variables d'environnement à copier en .env
-└── .github/            # Templates Issues/PR + workflows CI
+│
+├── frontend/
+│   ├── src/
+│   │   ├── app/
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   ├── lib/
+│   │   ├── store/
+│   │   └── types/
+│
+├── backend/
+│
+├── docs/
+│   ├── architecture.md
+│   ├── business-requirements.md
+│   ├── api-contract.md
+│   └── sprint-plan.md
+│
+├── .github/
+│
+├── docker-compose.yml
+├── .env.example
+├── README.md
+└── CONTRIBUTING.md
 ```
 
-## Démarrage rapide (dev)
+---
+
+# Prérequis
+
+Installer :
+
+- Git
+- Docker Desktop
+- WSL2 (Windows)
+- Node.js (optionnel pour exécution hors Docker)
+
+Vérifier :
 
 ```bash
-# 1. Cloner le repo
+docker --version
+docker compose version
+```
+
+---
+
+# Installation
+
+## 1. Cloner
+
+```bash
 git clone https://github.com/yassinelaamarti/smarterp-ai.git
+
 cd smarterp-ai
+```
 
-# 2. Copier les variables d'environnement
+---
+
+## 2. Configurer l’environnement
+
+Créer :
+
+```bash
 cp .env.example .env
+```
 
-# 3. Lancer avec Docker Compose
+Compléter :
+
+```env
+POSTGRES_USER=
+POSTGRES_PASSWORD=
+POSTGRES_DB=
+
+NEXT_PUBLIC_API_URL=
+```
+
+---
+
+## 3. Lancer le projet
+
+Premier lancement :
+
+```bash
 docker compose up --build
 ```
 
-- Frontend : http://localhost:3000
-- Backend (docs Swagger) : http://localhost:8000/docs
+Lancements suivants :
 
-## Équipe
+```bash
+docker compose up
+```
+
+Arrêter :
+
+```bash
+CTRL + C
+```
+
+Nettoyage complet :
+
+```bash
+docker compose down -v
+```
+
+---
+
+# Services disponibles
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| Backend | http://localhost:8000 |
+| Swagger | http://localhost:8000/docs |
+| Odoo | http://localhost:8069 |
+| PostgreSQL | localhost:5432 |
+
+---
+
+# Organisation de l’équipe
+
+Projet réalisé par une équipe de 3 étudiants.
+
+Mode de travail :
+
+- Collaboration Full-Stack
+- Responsabilité partagée
+- Revue collective des Pull Requests
+- Documentation commune
+
+Membres :
 
 | Nom | Rôle |
-|-----|------|
-| À compléter | Frontend Lead (Next.js/Dashboard) |
-| À compléter | Backend Lead (FastAPI/Odoo connector) |
-| À compléter | IA / Data Lead (Agent conversationnel, KPIs) |
+|---|---|
+| Laamarti Yassine | Full-Stack Engineer |
+| El Handi Zakariyae | Full-Stack Engineer |
+| Zouguari Yassine | Full-Stack Engineer |
 
-## Workflow de contribution
+---
 
-Voir [`CONTRIBUTING.md`](CONTRIBUTING.md) pour les conventions de branches, de commits et le processus de Pull Request.
+# État actuel
 
-## Licence
+## MVP — En cours
 
-Projet académique — usage interne à l'équipe et à UrikaCloud. Tous droits réservés.
+- [x] Initialisation Git
+- [x] Architecture Docker
+- [x] Frontend Next.js
+- [x] Backend FastAPI
+- [x] PostgreSQL
+- [x] Odoo 17
+- [ ] Dashboard KPI
+- [ ] Agent IA
+- [ ] Intégration Odoo
+- [ ] Authentification
+
+---
+
+# Licence
+
+Projet académique.
+
+Usage interne — Équipe SmartERP AI × UrikaCloud.
