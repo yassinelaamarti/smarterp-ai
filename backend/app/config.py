@@ -2,14 +2,21 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # Odoo
     odoo_url: str
     odoo_db: str
     odoo_username: str
-    odoo_api_key: str  # mot de passe/clé API Odoo
+    odoo_api_key: str
+
+    # Base de données (cache)
+    database_url: str
+
+    # Synchronisation en arrière-plan
+    sync_interval_seconds: int = 900  # 15 minutes par défaut
 
     class Config:
         env_file = ".env"
-        extra = "ignore"  # ignore les autres variables du .env (POSTGRES_*, GROQ_*, etc.)
+        extra = "ignore"
 
 
 settings = Settings()
