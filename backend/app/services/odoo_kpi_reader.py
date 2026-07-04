@@ -28,6 +28,10 @@ def _add_months(d: date, months: int) -> date:
     return date(year, month, 1)
 
 
+# ---------------------------------------------------------------------
+# 6 premiers KPIs (déjà en place)
+# ---------------------------------------------------------------------
+
 def get_monthly_revenue() -> float:
     orders = odoo.search_read(
         "sale.order",
@@ -82,6 +86,62 @@ def get_conversion_rate() -> float:
     return round((won / total) * 100, 1)
 
 
+# ---------------------------------------------------------------------
+# 4 nouveaux KPIs
+# ---------------------------------------------------------------------
+
+def get_pipeline_value() -> float:
+    """Valeur totale des opportunités CRM encore ouvertes (ni gagnées, ni perdues)."""
+    opportunities = odoo.search_read(
+        "crm.lead",
+        [
+            ["type", "=", "opportunity"],
+            ["active", "=", True],
+            ["stage_id.is_won", "=", False],
+        ],
+        ["expected_revenue"],
+    )
+    return round(sum(o["expected_revenue"] for o in opportunities), 2)
+
+
+def get_stock_valuation() -> float:
+    """Valeur totale de l'inventaire actuel (quantité disponible x coût de revient)."""
+    products = odoo.search_read(
+        "product.product",
+        [["type", "=", "product"]],
+        ["qty_available", "standard_price"],
+    )
+    total = sum(p["qty_available"] * p["standard_price"] for p in products)
+    return round(total, 2)
+
+
+def get_active_customers_count() -> int:
+    """Nombre de clients distincts ayant passé au moins une commande ce mois-ci."""
+    orders = odoo.search_read(
+        "sale.order",
+        [["date_order", ">=", _first_day_of_month()]],
+        ["partner_id"],
+    )
+    partner_ids = {o["partner_id"][0] for o in orders if o.get("partner_id")}
+    return len(partner_ids)
+
+
+def get_late_orders_count() -> int:
+    """Commandes confirmées dont la date de livraison prévue est déjà dépassée."""
+    today_str = date.today().strftime("%Y-%m-%d")
+    return odoo.search_count(
+        "sale.order",
+        [
+            ["state", "in", ["sale", "done"]],
+            ["commitment_date", "<", today_str],
+        ],
+    )
+
+
+# ---------------------------------------------------------------------
+# Historique du CA (pour le graphique)
+# ---------------------------------------------------------------------
+
 def get_monthly_revenue_history(months: int = 6) -> list[dict]:
     current_month_start = date.today().replace(day=1)
     history = []
@@ -110,8 +170,12 @@ def get_monthly_revenue_history(months: int = 6) -> list[dict]:
     return history
 
 
+# ---------------------------------------------------------------------
+# Assemblage des 10 KPIs
+# ---------------------------------------------------------------------
+
 def get_kpis() -> list[KPI]:
-    """Recalcule tous les KPIs en interrogeant Odoo en direct (coûteux, usage interne uniquement)."""
+    """Recalcule les 10 KPIs en interrogeant Odoo en direct (coûteux, usage interne uniquement)."""
     revenue = get_monthly_revenue()
     orders_count = get_new_orders_count()
 
@@ -127,4 +191,8 @@ def get_kpis() -> list[KPI]:
         KPI(id="stock_alerts", label="Alertes stock bas", value=get_stock_alerts_count(), unit="produits"),
         KPI(id="new_leads", label="Nouveaux leads CRM", value=get_new_leads_count(), unit="leads"),
         KPI(id="conversion_rate", label="Taux de conversion", value=get_conversion_rate(), unit="%"),
+        KPI(id="pipeline_value", label="Pipeline CRM ouvert", value=get_pipeline_value(), unit="MAD"),
+        KPI(id="stock_value", label="Valorisation du stock", value=get_stock_valuation(), unit="MAD"),
+        KPI(id="active_customers", label="Clients actifs (mois)", value=get_active_customers_count(), unit="clients"),
+        KPI(id="late_orders", label="Commandes en retard", value=get_late_orders_count(), unit="commandes"),
     ]

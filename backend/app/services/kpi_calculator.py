@@ -2,8 +2,7 @@
 Lecture des KPIs pour l'API — lit EXCLUSIVEMENT le cache PostgreSQL.
 
 N'appelle jamais Odoo directement : c'est services/kpi_sync.py qui
-garde ce cache à jour en arrière-plan. Résultat : l'API répond
-instantanément, même si Odoo est lent ou temporairement indisponible.
+garde ce cache à jour en arrière-plan.
 """
 
 from sqlalchemy.orm import Session
@@ -12,11 +11,12 @@ from app.database import SessionLocal
 from app.models.kpi_cache import KPICache, RevenueHistoryCache
 from app.schemas.kpi import KPI
 
-# Ordre d'affichage souhaité (les nouveaux KPIs pas encore dans cette liste
-# s'ajoutent simplement à la fin, rien ne casse).
+# Ordre d'affichage souhaité — les 10 KPIs cibles.
+# Un nouveau KPI pas encore listé ici s'ajoute simplement à la fin, rien ne casse.
 _KPI_ORDER = [
     "revenue", "new_orders", "avg_order_value",
     "stock_alerts", "new_leads", "conversion_rate",
+    "pipeline_value", "stock_value", "active_customers", "late_orders",
 ]
 
 
