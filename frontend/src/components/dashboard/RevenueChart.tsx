@@ -20,57 +20,75 @@ export function RevenueChart() {
 
   if (isLoading) {
     return (
-      <div className="h-72 animate-pulse rounded-xl border border-gray-200 bg-gray-100" />
+      <div className="h-96 animate-pulse rounded-2xl border border-slate-900 bg-slate-900/20" />
     );
   }
 
   if (isError) {
     return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+      <div className="rounded-2xl border border-red-900/20 bg-red-950/20 p-5 text-sm text-red-400 backdrop-blur-xl">
         Impossible de charger l&apos;historique du CA : {(error as Error)?.message ?? "erreur inconnue"}.
       </div>
     );
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-      <p className="text-sm font-medium text-gray-500">
-        Évolution du chiffre d&apos;affaires — 6 derniers mois
-      </p>
+    <div className="rounded-2xl border border-slate-900 bg-slate-900/40 p-6 backdrop-blur-xl shadow-sm hover:border-slate-800 transition-colors duration-300">
+      <div className="mb-6">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
+          Évolution du chiffre d&apos;affaires
+        </h3>
+        <p className="mt-1 text-xs text-slate-500">
+          Revenus consolidés mensuels sur les 6 derniers mois
+        </p>
+      </div>
 
-      <div className="mt-4 h-72">
+      <div className="h-80">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+          <AreaChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <defs>
               <linearGradient id="revenueFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#0f6e56" stopOpacity={0.25} />
-                <stop offset="100%" stopColor="#0f6e56" stopOpacity={0} />
+                <stop offset="0%" stopColor="#6366f1" stopOpacity={0.2} />
+                <stop offset="100%" stopColor="#6366f1" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
             <XAxis
               dataKey="label"
-              tick={{ fontSize: 12, fill: "#6b7280" }}
-              axisLine={{ stroke: "#e5e7eb" }}
+              tick={{ fontSize: 11, fill: "#64748b", fontWeight: 500 }}
+              axisLine={{ stroke: "#1e293b" }}
               tickLine={false}
+              dy={10}
             />
             <YAxis
-              tick={{ fontSize: 12, fill: "#6b7280" }}
+              tick={{ fontSize: 11, fill: "#64748b", fontWeight: 500 }}
               axisLine={false}
               tickLine={false}
-              width={70}
-              tickFormatter={(v) => v.toLocaleString("fr-FR")}
+              tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
+              dx={-5}
             />
             <Tooltip
-              formatter={(value: number) => [formatMAD(value), "Chiffre d'affaires"]}
-              contentStyle={{ borderRadius: 8, borderColor: "#e5e7eb", fontSize: 13 }}
+              content={({ active, payload }) => {
+                if (active && payload && payload.length) {
+                  const val = payload[0].value as number;
+                  const label = payload[0].payload.label;
+                  return (
+                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 shadow-xl backdrop-blur-xl">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+                      <p className="mt-1 text-sm font-bold text-white">{formatMAD(val)}</p>
+                    </div>
+                  );
+                }
+                return null;
+              }}
             />
             <Area
               type="monotone"
               dataKey="revenue"
-              stroke="#0f6e56"
-              strokeWidth={2}
+              stroke="#6366f1"
+              strokeWidth={3}
               fill="url(#revenueFill)"
+              activeDot={{ r: 6, stroke: "#6366f1", strokeWidth: 2, fill: "#0f172a" }}
             />
           </AreaChart>
         </ResponsiveContainer>
