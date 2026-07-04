@@ -9,7 +9,7 @@ export function KPIGrid() {
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, i) => (
+        {Array.from({ length: 10 }).map((_, i) => (
           <div
             key={i}
             className="h-28 animate-pulse rounded-xl border border-gray-200 bg-gray-100"

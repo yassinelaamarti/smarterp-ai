@@ -6,9 +6,12 @@ appeler Odoo pour les KPIs. Il n'est utilisé que par services/kpi_sync.py,
 en arrière-plan — jamais directement par une route API.
 """
 
+import logging
 from datetime import date
 from app.schemas.kpi import KPI
 from app.services.odoo_connector import odoo
+
+logger = logging.getLogger(__name__)
 
 _MONTHS_FR = [
     "janv.", "févr.", "mars", "avr.", "mai", "juin",
@@ -176,8 +179,65 @@ def get_monthly_revenue_history(months: int = 6) -> list[dict]:
 
 def get_kpis() -> list[KPI]:
     """Recalcule les 10 KPIs en interrogeant Odoo en direct (coûteux, usage interne uniquement)."""
-    revenue = get_monthly_revenue()
-    orders_count = get_new_orders_count()
+    try:
+        revenue = get_monthly_revenue()
+    except Exception as e:
+        logger.error(f"Error calculating monthly revenue: {e}")
+        revenue = 0.0
+
+    try:
+        orders_count = get_new_orders_count()
+    except Exception as e:
+        logger.error(f"Error calculating new orders count: {e}")
+        orders_count = 0.0
+
+    try:
+        avg_order_value = get_avg_order_value(revenue, orders_count)
+    except Exception as e:
+        logger.error(f"Error calculating avg order value: {e}")
+        avg_order_value = 0.0
+
+    try:
+        stock_alerts = get_stock_alerts_count()
+    except Exception as e:
+        logger.error(f"Error calculating stock alerts count: {e}")
+        stock_alerts = 0.0
+
+    try:
+        new_leads = get_new_leads_count()
+    except Exception as e:
+        logger.error(f"Error calculating new leads count: {e}")
+        new_leads = 0.0
+
+    try:
+        conversion_rate = get_conversion_rate()
+    except Exception as e:
+        logger.error(f"Error calculating conversion rate: {e}")
+        conversion_rate = 0.0
+
+    try:
+        pipeline_value = get_pipeline_value()
+    except Exception as e:
+        logger.error(f"Error calculating CRM pipeline: {e}")
+        pipeline_value = 0.0
+
+    try:
+        stock_value = get_stock_valuation()
+    except Exception as e:
+        logger.error(f"Error calculating stock valuation: {e}")
+        stock_value = 0.0
+
+    try:
+        active_customers = get_active_customers_count()
+    except Exception as e:
+        logger.error(f"Error calculating active customers: {e}")
+        active_customers = 0
+
+    try:
+        late_orders = get_late_orders_count()
+    except Exception as e:
+        logger.error(f"Error calculating late orders: {e}")
+        late_orders = 0
 
     return [
         KPI(id="revenue", label="Chiffre d'affaires (mois)", value=revenue, unit="MAD"),
@@ -185,14 +245,14 @@ def get_kpis() -> list[KPI]:
         KPI(
             id="avg_order_value",
             label="Panier moyen",
-            value=get_avg_order_value(revenue, orders_count),
+            value=avg_order_value,
             unit="MAD",
         ),
-        KPI(id="stock_alerts", label="Alertes stock bas", value=get_stock_alerts_count(), unit="produits"),
-        KPI(id="new_leads", label="Nouveaux leads CRM", value=get_new_leads_count(), unit="leads"),
-        KPI(id="conversion_rate", label="Taux de conversion", value=get_conversion_rate(), unit="%"),
-        KPI(id="pipeline_value", label="Pipeline CRM ouvert", value=get_pipeline_value(), unit="MAD"),
-        KPI(id="stock_value", label="Valorisation du stock", value=get_stock_valuation(), unit="MAD"),
-        KPI(id="active_customers", label="Clients actifs (mois)", value=get_active_customers_count(), unit="clients"),
-        KPI(id="late_orders", label="Commandes en retard", value=get_late_orders_count(), unit="commandes"),
+        KPI(id="stock_alerts", label="Alertes stock bas", value=stock_alerts, unit="produits"),
+        KPI(id="new_leads", label="Nouveaux leads CRM", value=new_leads, unit="leads"),
+        KPI(id="conversion_rate", label="Taux de conversion", value=conversion_rate, unit="%"),
+        KPI(id="pipeline_value", label="Pipeline CRM ouvert", value=pipeline_value, unit="MAD"),
+        KPI(id="stock_value", label="Valorisation du stock", value=stock_value, unit="MAD"),
+        KPI(id="active_customers", label="Clients actifs (mois)", value=active_customers, unit="clients"),
+        KPI(id="late_orders", label="Commandes en retard", value=late_orders, unit="commandes"),
     ]
