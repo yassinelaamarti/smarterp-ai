@@ -13,7 +13,10 @@ import {
   Cpu,
   ShieldCheck,
   TrendingUp,
+  LogOut,
 } from "lucide-react";
+import { useAuthStore } from "@/store/useAuthStore";
+import AuthGuard from "@/components/auth/AuthGuard";
 
 export default function DashboardLayout({
   children,
@@ -21,6 +24,20 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const { user, logout } = useAuthStore();
+
+  const getInitials = (name?: string | null) => {
+    if (!name) return "U";
+    const parts = name.split(" ");
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    }
+    return parts[0][0].toUpperCase();
+  };
+
+  const initials = getInitials(user?.full_name || user?.email);
+  const fullName = user?.full_name || "Utilisateur";
+  const userRole = user?.role === "admin" ? "Administrateur" : "Utilisateur";
 
   const navigation = [
     { name: "Tableau de Bord", href: "/dashboard", icon: LayoutDashboard },
@@ -29,7 +46,8 @@ export default function DashboardLayout({
   ];
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 font-sans">
+    <AuthGuard>
+      <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 font-sans">
       {/* Sidebar */}
       <aside className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0 border-r border-slate-900 bg-slate-950/80 backdrop-blur-xl">
         <div className="flex flex-col flex-grow pt-5 pb-4 overflow-y-auto">
@@ -83,6 +101,15 @@ export default function DashboardLayout({
                 </div>
               );
             })}
+            
+            {/* Bouton de déconnexion */}
+            <button
+              onClick={logout}
+              className="w-full group flex items-center px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 text-slate-400 hover:bg-red-950/20 hover:text-red-400 mt-4 cursor-pointer text-left"
+            >
+              <LogOut className="mr-3 h-5 w-5 flex-shrink-0 transition-colors text-slate-400 group-hover:text-red-400" />
+              Déconnexion
+            </button>
           </nav>
         </div>
 
@@ -139,12 +166,14 @@ export default function DashboardLayout({
 
             {/* Notification and User actions */}
             <div className="ml-4 flex items-center md:ml-6 gap-4">
+              {/* Bouton de déconnexion rapide */}
               <button
                 type="button"
-                className="p-1 rounded-full text-slate-400 hover:text-slate-200 focus:outline-none bg-slate-900/50 hover:bg-slate-900 transition-colors border border-slate-800"
+                onClick={logout}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-red-400 focus:outline-none bg-slate-900/50 hover:bg-slate-900 transition-colors border border-slate-800 cursor-pointer"
+                title="Déconnexion"
               >
-                <span className="sr-only">Notifications</span>
-                <Bell className="h-4 w-4" aria-hidden="true" />
+                <LogOut className="h-4 w-4" aria-hidden="true" />
               </button>
 
               <div className="h-4 w-px bg-slate-900"></div>
@@ -152,14 +181,14 @@ export default function DashboardLayout({
               {/* Profile dropdown */}
               <div className="flex items-center gap-3">
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white shadow shadow-indigo-500/20">
-                  YL
+                  {initials}
                 </div>
                 <div className="hidden lg:block text-left">
                   <span className="block text-xs font-semibold text-slate-300">
-                    Yassine Laamarti
+                    {fullName}
                   </span>
                   <span className="block text-[10px] text-slate-500 font-medium">
-                    Administrateur
+                    {userRole}
                   </span>
                 </div>
               </div>
@@ -174,6 +203,7 @@ export default function DashboardLayout({
           </div>
         </main>
       </div>
-    </div>
+      </div>
+    </AuthGuard>
   );
 }
