@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     groq_api_key: str
     groq_model: str = "openai/gpt-oss-120b"
 
+    # Authentification JWT
+    secret_key: str = "changeme-generate-a-random-secret"
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 10080  # 7 jours
+
     class Config:
         env_file = ".env"
         extra = "ignore"
