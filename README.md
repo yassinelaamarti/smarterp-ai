@@ -254,9 +254,9 @@ Membres :
 - [x] Intégration Odoo (connecteur XML-RPC, lecture Ventes/CRM/Stock)
 - [x] Cache PostgreSQL + synchronisation périodique (toutes les 15 min)
 - [x] Dashboard KPI — 6 KPIs sur 10, + graphique d'évolution du CA (Recharts)
-- [ ] 4 KPIs restants (pipeline CRM, valorisation stock, clients actifs, commandes en retard)
-- [ ] Tendances réelles (comparaison au mois précédent)
-- [ ] Agent IA (Groq/LLaMA + interface de chat)
+- [x] 4 KPIs restants (pipeline CRM, valorisation stock, clients actifs, commandes en retard)
+- [x] Tendances réelles (comparaison au mois précédent)
+- [x] Agent IA (Groq/LLaMA + interface de chat)
 - [ ] Système d'alertes automatiques
 - [ ] Authentification
 - [ ] Landing page publique

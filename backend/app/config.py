@@ -12,7 +12,11 @@ class Settings(BaseSettings):
     database_url: str
 
     # Synchronisation en arrière-plan
-    sync_interval_seconds: int = 900  # 15 minutes par défaut
+    sync_interval_seconds: int = 900
+
+    # Agent IA (Groq)
+    groq_api_key: str
+    groq_model: str = "llama-3.3-70b-versatile"
 
     class Config:
         env_file = ".env"

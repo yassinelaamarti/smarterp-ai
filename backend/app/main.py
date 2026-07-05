@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import engine, Base
-from app.routers import kpis
+from app.routers import kpis, chat
 from app.services.kpi_sync import sync_all
 
 logging.basicConfig(level=logging.INFO)
@@ -17,7 +17,6 @@ _background_task: asyncio.Task | None = None
 
 
 async def _sync_loop():
-    """Relance sync_all() toutes les `sync_interval_seconds`, indéfiniment."""
     while True:
         await asyncio.sleep(settings.sync_interval_seconds)
         await asyncio.to_thread(sync_all)
@@ -25,16 +24,14 @@ async def _sync_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # --- Démarrage ---
-    Base.metadata.create_all(bind=engine)  # crée kpi_cache / revenue_history_cache si absentes
-    await asyncio.to_thread(sync_all)       # première synchro, pour ne pas démarrer avec un cache vide
+    Base.metadata.create_all(bind=engine)
+    await asyncio.to_thread(sync_all)
 
     global _background_task
     _background_task = asyncio.create_task(_sync_loop())
 
     yield
 
-    # --- Arrêt propre ---
     if _background_task:
         _background_task.cancel()
 
@@ -55,6 +52,7 @@ app.add_middleware(
 )
 
 app.include_router(kpis.router)
+app.include_router(chat.router)
 
 
 @app.get("/")
