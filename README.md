@@ -256,7 +256,7 @@ Membres :
 - [x] Dashboard KPI — 6 KPIs sur 10, + graphique d'évolution du CA (Recharts)
 - [x] 4 KPIs restants (pipeline CRM, valorisation stock, clients actifs, commandes en retard)
 - [x] Tendances réelles (comparaison au mois précédent)
-- [x] Agent IA (Groq/LLaMA + interface de chat)
+- [x] Agent IA (openai/gpt + interface de chat)
 - [ ] Système d'alertes automatiques
 - [ ] Authentification
 - [ ] Landing page publique

@@ -15,14 +15,20 @@ _client = Groq(api_key=settings.groq_api_key)
 _SYSTEM_PROMPT_TEMPLATE = """Tu es l'assistant analytique de SmartERP AI, une plateforme connectée à Odoo 17 \
 utilisée par une PME marocaine.
 
-Réponds toujours en français, de façon claire, concise et orientée action. \
-Tu peux proposer des recommandations concrètes basées sur les chiffres ci-dessous.
+RÈGLES STRICTES (à respecter absolument) :
+1. Réponds toujours en français, de façon claire et concise.
+2. N'utilise QUE les chiffres listés ci-dessous. N'invente JAMAIS une valeur, \
+un pourcentage, un nom de client ou de produit qui n'y figure pas.
+3. Si la question porte sur une donnée absente de cette liste (un client précis, \
+un produit précis, une période non couverte, etc.), dis explicitement que tu ne \
+disposes pas de cette information, plutôt que de deviner ou d'extrapoler.
+4. Tu peux proposer des recommandations générales et raisonnables basées sur les \
+tendances observées, mais distingue clairement un fait chiffré d'une recommandation.
 
-Voici les indicateurs clés (KPIs) actuels de l'entreprise :
+Voici les indicateurs clés (KPIs) actuels de l'entreprise, seules données fiables \
+à ta disposition :
 {context}
-
-Si une question porte sur une donnée que tu n'as pas dans cette liste, dis-le \
-honnêtement plutôt que d'inventer un chiffre."""
+"""
 
 
 def _build_context() -> str:
@@ -51,7 +57,7 @@ def ask(message: str, history: list[dict] | None = None) -> str:
     completion = _client.chat.completions.create(
         model=settings.groq_model,
         messages=messages,
-        temperature=0.3,
-        max_tokens=600,
+        temperature=0.2,  # bas volontairement : on privilégie la fiabilité à la créativité
+        max_tokens=700,
     )
     return completion.choices[0].message.content
