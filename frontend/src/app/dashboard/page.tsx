@@ -1,5 +1,6 @@
 import { KPIGrid } from "@/components/dashboard/KPIGrid";
 import { RevenueChart } from "@/components/dashboard/RevenueChart";
+import { AlertBanner } from "@/components/dashboard/AlertBanner";
 
 export default function DashboardPage() {
   return (
@@ -14,6 +15,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="mt-6">
+        <AlertBanner />
         <KPIGrid />
       </div>
 

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import engine, Base, SessionLocal
-from app.routers import kpis, chat, auth
+from app.routers import kpis, chat, auth, alerts
 from app.services.kpi_sync import sync_all
 from app.models.user import User
 from app.services.auth import get_password_hash
@@ -78,6 +78,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(kpis.router)
 app.include_router(chat.router)
+app.include_router(alerts.router)
 
 
 @app.get("/")
