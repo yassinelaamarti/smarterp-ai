@@ -16,8 +16,8 @@ export function MessageBubble({ role, content, isLoading }: MessageBubbleProps) 
         className={cn(
           "flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl border",
           isUser
-            ? "bg-indigo-600 border-indigo-500 text-white"
-            : "bg-slate-950 border-slate-800 text-indigo-400"
+            ? "bg-blue-600 border-blue-500 text-white"
+            : "bg-slate-100 border-slate-200 text-blue-600"
         )}
       >
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
@@ -25,10 +25,10 @@ export function MessageBubble({ role, content, isLoading }: MessageBubbleProps) 
 
       <div
         className={cn(
-          "max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
+          "max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-xs",
           isUser
-            ? "bg-indigo-600/10 border border-indigo-500/20 text-slate-100"
-            : "bg-slate-950 border border-slate-900 text-slate-200"
+            ? "bg-blue-600 text-white border border-blue-600"
+            : "bg-slate-50 border border-slate-200/80 text-slate-800"
         )}
       >
         {isLoading ? (

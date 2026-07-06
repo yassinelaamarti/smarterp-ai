@@ -21,9 +21,9 @@ interface KPICardProps {
 }
 
 const trendConfig = {
-  up: { icon: TrendingUp, color: "text-emerald-400 bg-emerald-500/10 border border-emerald-500/20" },
-  down: { icon: TrendingDown, color: "text-red-400 bg-red-500/10 border border-red-500/20" },
-  stable: { icon: Minus, color: "text-slate-400 bg-slate-500/10 border border-slate-500/20" },
+  up: { icon: TrendingUp, color: "text-emerald-700 bg-emerald-50 border border-emerald-100" },
+  down: { icon: TrendingDown, color: "text-red-700 bg-red-50 border border-red-100" },
+  stable: { icon: Minus, color: "text-slate-600 bg-slate-50 border border-slate-100" },
 };
 
 const kpiIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -49,33 +49,27 @@ export function KPICard({ kpi }: KPICardProps) {
 
   return (
     <div className={cn(
-      "relative overflow-hidden rounded-2xl border bg-slate-900/40 p-6 backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 hover:bg-slate-900/60 group",
+      "relative overflow-hidden rounded-2xl border p-6 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md group",
       isAlert 
-        ? "border-amber-500/20 hover:border-amber-500/40 hover:shadow-[0_0_20px_rgba(245,158,11,0.05)]" 
-        : "border-slate-900 hover:border-slate-800 hover:shadow-[0_0_20px_rgba(99,102,241,0.03)]"
+        ? "bg-amber-50/40 border-amber-200/80 shadow-sm" 
+        : "bg-white border-slate-200/80 shadow-sm"
     )}>
-      {/* Background card accent glow */}
-      <div className={cn(
-        "absolute -right-6 -top-6 h-24 w-24 rounded-full blur-2xl opacity-10 transition-opacity duration-300 group-hover:opacity-15",
-        isAlert ? "bg-amber-500" : "bg-indigo-500"
-      )} />
-
       <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">{kpi.label}</p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{kpi.label}</p>
         <div className={cn(
-          "flex h-9 w-9 items-center justify-center rounded-xl text-slate-300 transition-colors duration-200 bg-slate-950 border border-slate-900 group-hover:border-slate-800 group-hover:text-white",
-          isAlert && "text-amber-400 group-hover:text-amber-300"
+          "flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors duration-200 bg-slate-50 border border-slate-100 group-hover:border-slate-200 group-hover:text-slate-700",
+          isAlert && "bg-amber-100/50 text-amber-700 border-amber-200/50 group-hover:bg-amber-100 group-hover:text-amber-800"
         )}>
           <Icon className="h-4 w-4" />
         </div>
       </div>
 
       <div className="mt-4 flex items-baseline gap-1.5">
-        <span className="text-2xl font-bold tracking-tight text-white">
+        <span className="text-2xl font-bold tracking-tight text-slate-900">
           {kpi.value.toLocaleString("fr-FR")}
         </span>
         {kpi.unit && (
-          <span className="text-xs font-medium text-slate-400">{kpi.unit}</span>
+          <span className="text-xs font-medium text-slate-500">{kpi.unit}</span>
         )}
       </div>
 

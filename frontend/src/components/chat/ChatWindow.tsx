@@ -14,15 +14,15 @@ export function ChatWindow() {
   }, [messages, isSending]);
 
   return (
-    <div className="flex h-[calc(100vh-12rem)] flex-col rounded-2xl border border-slate-900 bg-slate-900/40 backdrop-blur-xl">
+    <div className="flex h-[calc(100vh-12rem)] flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.length === 0 && (
           <div className="flex h-full items-center justify-center text-center">
             <div>
-              <p className="text-sm font-medium text-slate-300">
+              <p className="text-sm font-semibold text-slate-700">
                 Posez une question sur vos données
               </p>
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1 text-xs text-slate-400 font-medium">
                 Ex : « Pourquoi le chiffre d&apos;affaires a-t-il évolué ce mois-ci ? »
               </p>
             </div>
@@ -36,7 +36,7 @@ export function ChatWindow() {
         {isSending && <MessageBubble role="assistant" content="" isLoading />}
 
         {error && (
-          <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-400">
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
             {error}
           </div>
         )}

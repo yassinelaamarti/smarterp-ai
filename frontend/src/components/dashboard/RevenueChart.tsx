@@ -20,25 +20,25 @@ export function RevenueChart() {
 
   if (isLoading) {
     return (
-      <div className="h-96 animate-pulse rounded-2xl border border-slate-900 bg-slate-900/20" />
+      <div className="h-96 animate-pulse rounded-2xl border border-slate-200 bg-slate-100" />
     );
   }
 
   if (isError) {
     return (
-      <div className="rounded-2xl border border-red-900/20 bg-red-950/20 p-5 text-sm text-red-400 backdrop-blur-xl">
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
         Impossible de charger l&apos;historique du CA : {(error as Error)?.message ?? "erreur inconnue"}.
       </div>
     );
   }
 
   return (
-    <div className="rounded-2xl border border-slate-900 bg-slate-900/40 p-6 backdrop-blur-xl shadow-sm hover:border-slate-800 transition-colors duration-300">
+    <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm hover:border-slate-300 transition-colors duration-300">
       <div className="mb-6">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
           Évolution du chiffre d&apos;affaires
         </h3>
-        <p className="mt-1 text-xs text-slate-500">
+        <p className="mt-1 text-xs text-slate-500 font-medium">
           Revenus consolidés mensuels sur les 6 derniers mois
         </p>
       </div>
@@ -48,15 +48,15 @@ export function RevenueChart() {
           <AreaChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
             <defs>
               <linearGradient id="revenueFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#6366f1" stopOpacity={0.2} />
-                <stop offset="100%" stopColor="#6366f1" stopOpacity={0} />
+                <stop offset="0%" stopColor="#2563eb" stopOpacity={0.12} />
+                <stop offset="100%" stopColor="#2563eb" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
             <XAxis
               dataKey="label"
               tick={{ fontSize: 11, fill: "#64748b", fontWeight: 500 }}
-              axisLine={{ stroke: "#1e293b" }}
+              axisLine={{ stroke: "#e2e8f0" }}
               tickLine={false}
               dy={10}
             />
@@ -73,9 +73,9 @@ export function RevenueChart() {
                   const val = payload[0].value as number;
                   const label = payload[0].payload.label;
                   return (
-                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 shadow-xl backdrop-blur-xl">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
-                      <p className="mt-1 text-sm font-bold text-white">{formatMAD(val)}</p>
+                    <div className="rounded-xl border border-slate-100 bg-white p-3 shadow-lg">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
+                      <p className="mt-1 text-sm font-bold text-slate-900">{formatMAD(val)}</p>
                     </div>
                   );
                 }
@@ -85,10 +85,10 @@ export function RevenueChart() {
             <Area
               type="monotone"
               dataKey="revenue"
-              stroke="#6366f1"
+              stroke="#2563eb"
               strokeWidth={3}
               fill="url(#revenueFill)"
-              activeDot={{ r: 6, stroke: "#6366f1", strokeWidth: 2, fill: "#0f172a" }}
+              activeDot={{ r: 6, stroke: "#2563eb", strokeWidth: 2, fill: "#ffffff" }}
             />
           </AreaChart>
         </ResponsiveContainer>
