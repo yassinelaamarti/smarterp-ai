@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
@@ -33,9 +33,13 @@ export function useChat() {
     },
   });
 
+  const sendMessage = useCallback((message: string) => {
+    mutation.mutate(message);
+  }, [mutation]);
+
   return {
     messages,
-    sendMessage: (message: string) => mutation.mutate(message),
+    sendMessage,
     isSending: mutation.isPending,
     error,
   };

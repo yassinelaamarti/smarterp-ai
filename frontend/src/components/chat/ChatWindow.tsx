@@ -12,8 +12,11 @@ export function ChatWindow() {
   const searchParams = useSearchParams();
   const prompt = searchParams.get("prompt");
 
+  const hasSentRef = useRef(false);
+
   useEffect(() => {
-    if (prompt) {
+    if (prompt && !hasSentRef.current) {
+      hasSentRef.current = true;
       sendMessage(prompt);
       // Clean up the URL search params so reloading doesn't resend
       const newUrl = window.location.pathname;

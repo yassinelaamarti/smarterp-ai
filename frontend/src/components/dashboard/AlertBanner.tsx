@@ -20,15 +20,15 @@ export function AlertBanner() {
           <div
             key={alert.id}
             className={cn(
-              "flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm backdrop-blur-xl",
+              "flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm backdrop-blur-xl shadow-xs transition-all",
               isCritical
-                ? "border-red-500/20 bg-red-500/10 text-red-300"
-                : "border-amber-500/20 bg-amber-500/10 text-amber-300"
+                ? "border-red-100 bg-red-50/70 text-red-950"
+                : "border-amber-100 bg-amber-50/70 text-amber-950"
             )}
           >
             <div className="flex items-center gap-3">
-              <Icon className="h-4 w-4 flex-shrink-0" />
-              <span>{alert.message}</span>
+              <Icon className={cn("h-4 w-4 flex-shrink-0", isCritical ? "text-red-600" : "text-amber-600")} />
+              <span className="font-medium">{alert.message}</span>
             </div>
             <button
               onClick={() => {
@@ -36,10 +36,10 @@ export function AlertBanner() {
                 router.push(`/dashboard/chat?prompt=${encodeURIComponent(promptText)}`);
               }}
               className={cn(
-                "flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg border transition-all cursor-pointer",
+                "flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer shadow-xs",
                 isCritical
-                  ? "border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-200"
-                  : "border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200"
+                  ? "border-red-200 bg-white hover:bg-red-50 text-red-700"
+                  : "border-amber-200 bg-white hover:bg-amber-50 text-amber-700"
               )}
             >
               Analyser avec l'IA
