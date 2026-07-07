@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 
 export default function ChatPage() {
@@ -9,8 +10,15 @@ export default function ChatPage() {
       </p>
 
       <div className="mt-6">
-        <ChatWindow />
+        <Suspense fallback={
+          <div className="flex h-[calc(100vh-12rem)] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+            <p className="text-sm text-slate-400 animate-pulse">Chargement de l'agent conversationnel...</p>
+          </div>
+        }>
+          <ChatWindow />
+        </Suspense>
       </div>
     </div>
   );
 }
+

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useChat } from "@/hooks/useChat";
 import { MessageBubble } from "./MessageBubble";
 import { ChatInput } from "./ChatInput";
@@ -8,6 +9,17 @@ import { ChatInput } from "./ChatInput";
 export function ChatWindow() {
   const { messages, sendMessage, isSending, error } = useChat();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const searchParams = useSearchParams();
+  const prompt = searchParams.get("prompt");
+
+  useEffect(() => {
+    if (prompt) {
+      sendMessage(prompt);
+      // Clean up the URL search params so reloading doesn't resend
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, "", newUrl);
+    }
+  }, [prompt, sendMessage]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
