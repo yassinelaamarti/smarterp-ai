@@ -24,7 +24,7 @@ export default function SettingsPage() {
   } = useSettings();
 
   const [localSettings, setLocalSettings] = useState<AlertSetting[]>([]);
-  const hasSuccessMessage = useRef(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
 
   useEffect(() => {
     if (settings) {
@@ -34,14 +34,21 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (isSaveSuccess) {
-      hasSuccessMessage.current = true;
       const timer = setTimeout(() => {
         resetSaveState();
-        hasSuccessMessage.current = false;
       }, 4000);
       return () => clearTimeout(timer);
     }
   }, [isSaveSuccess, resetSaveState]);
+
+  useEffect(() => {
+    if (resetSuccess) {
+      const timer = setTimeout(() => {
+        setResetSuccess(false);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [resetSuccess]);
 
   const handleChange = (key: string, value: number) => {
     setLocalSettings((prev) =>
@@ -51,10 +58,20 @@ export default function SettingsPage() {
 
   const getSetting = (key: string) => localSettings.find((s) => s.key === key);
 
+  const handleReset = () => {
+    if (settings) {
+      setLocalSettings(JSON.parse(JSON.stringify(settings)));
+      setResetSuccess(true);
+      resetSaveState();
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setResetSuccess(false);
     save(localSettings);
   };
+
 
   const renderInput = (key: string, label: string, desc: string, unit: string) => {
     const setting = getSetting(key);
@@ -117,13 +134,24 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Success banner */}
-      {isSaveSuccess && (
-        <div className="mt-6 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/60 text-emerald-800 px-4 py-3 text-sm font-semibold shadow-xs animate-fadeIn backdrop-blur-xs">
-          <CheckCircle className="h-4 w-4 flex-shrink-0 text-emerald-600" />
-          <span>Configuration sauvegardée avec succès. Les alertes se recalculeront instantanément.</span>
+      {/* Floating Success Toast */}
+      {(isSaveSuccess || resetSuccess) && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-xl border border-slate-200 bg-white/95 backdrop-blur-md px-4 py-3 text-sm font-semibold shadow-lg max-w-md w-[90%] sm:w-auto animate-fadeIn transition-all duration-300">
+          <CheckCircle className={`h-5 w-5 flex-shrink-0 ${isSaveSuccess ? "text-emerald-600" : "text-blue-600"}`} />
+          <div className="text-left">
+            <p className={`font-semibold ${isSaveSuccess ? "text-slate-800" : "text-slate-800"}`}>
+              {isSaveSuccess ? "Sauvegarde réussie !" : "Réinitialisation réussie !"}
+            </p>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              {isSaveSuccess 
+                ? "La configuration a été mise à jour et appliquée." 
+                : "Les valeurs enregistrées ont été restaurées."}
+            </p>
+          </div>
         </div>
       )}
+
+
 
       <form onSubmit={handleSubmit} className="mt-8 space-y-6">
         {/* Section 1: Stocks & Commandes */}
@@ -189,14 +217,13 @@ export default function SettingsPage() {
         <div className="flex items-center justify-end gap-3 mt-8 border-t border-slate-150 pt-6">
           <button
             type="button"
-            onClick={() => {
-              if (settings) setLocalSettings(JSON.parse(JSON.stringify(settings)));
-            }}
+            onClick={handleReset}
             disabled={isSaving}
             className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50"
           >
             Réinitialiser les modifications
           </button>
+
           <button
             type="submit"
             disabled={isSaving}
