@@ -1,11 +1,7 @@
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-
-export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-}
+import { useChatStore, ChatMessage } from "@/store/useChatStore";
 
 async function sendChatMessage(message: string, history: ChatMessage[]): Promise<string> {
   const { data } = await api.post<{ reply: string }>("/api/chat/", {
@@ -16,17 +12,19 @@ async function sendChatMessage(message: string, history: ChatMessage[]): Promise
 }
 
 export function useChat() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const messages = useChatStore((s) => s.messages);
+  const error = useChatStore((s) => s.error);
+  const addMessage = useChatStore((s) => s.addMessage);
+  const setError = useChatStore((s) => s.setError);
 
   const mutation = useMutation({
     mutationFn: (message: string) => sendChatMessage(message, messages),
     onMutate: (message: string) => {
       setError(null);
-      setMessages((prev) => [...prev, { role: "user", content: message }]);
+      addMessage({ role: "user", content: message });
     },
     onSuccess: (reply: string) => {
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      addMessage({ role: "assistant", content: reply });
     },
     onError: (err: Error) => {
       setError(err.message ?? "Erreur de communication avec l'agent IA");

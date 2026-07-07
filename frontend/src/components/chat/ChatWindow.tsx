@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useChat } from "@/hooks/useChat";
 import { MessageBubble } from "./MessageBubble";
 import { ChatInput } from "./ChatInput";
@@ -10,6 +10,8 @@ export function ChatWindow() {
   const { messages, sendMessage, isSending, error } = useChat();
   const bottomRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const prompt = searchParams.get("prompt");
 
   const hasSentRef = useRef(false);
@@ -18,11 +20,12 @@ export function ChatWindow() {
     if (prompt && !hasSentRef.current) {
       hasSentRef.current = true;
       sendMessage(prompt);
-      // Clean up the URL search params so reloading doesn't resend
-      const newUrl = window.location.pathname;
-      window.history.replaceState({}, "", newUrl);
+      // Nettoie l'URL via le router Next (pas window.history directement,
+      // pour que useSearchParams reste synchronisé correctement).
+      router.replace(pathname, { scroll: false });
     }
-  }, [prompt, sendMessage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prompt]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
