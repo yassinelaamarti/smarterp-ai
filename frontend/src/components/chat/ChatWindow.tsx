@@ -5,8 +5,9 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useChat } from "@/hooks/useChat";
 import { MessageBubble } from "./MessageBubble";
 import { ChatInput } from "./ChatInput";
-import { TrendingUp, Package, AlertTriangle, Users, Sparkles, ArrowRight } from "lucide-react";
+import { TrendingUp, Package, AlertTriangle, Users, Sparkles, ArrowRight, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { jsPDF } from "jspdf";
 
 const SUGGESTIONS = [
   {
@@ -37,6 +38,18 @@ const SUGGESTIONS = [
 
 export function ChatWindow() {
   const { messages, sendMessage, isSending, error } = useChat();
+
+  const handleExportPDF = () => {
+    const doc = new jsPDF();
+    doc.text("SmartERP AI - Rapport de Chat", 10, 10);
+    let y = 20;
+    messages.forEach((m) => {
+      const prefix = m.role === "user" ? "Utilisateur: " : "Assistant: ";
+      doc.text(prefix + m.content.substring(0, 80), 10, y);
+      y += 10;
+    });
+    doc.save("smarterp-chat.pdf");
+  };
   const bottomRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -62,6 +75,21 @@ export function ChatWindow() {
 
   return (
     <div className="flex h-[calc(100vh-12rem)] flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+      {messages.length > 0 && (
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-3 bg-slate-50/50 rounded-t-2xl">
+          <div className="flex items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-xs font-semibold text-slate-500">Conversation active</span>
+          </div>
+          <button
+            onClick={handleExportPDF}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-2xs cursor-pointer"
+          >
+            <Download className="h-3.5 w-3.5 text-slate-400" />
+            Exporter en PDF
+          </button>
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         {messages.length === 0 && (
           <div className="flex h-full flex-col items-center justify-center text-center max-w-2xl mx-auto p-4 animate-fadeIn">
