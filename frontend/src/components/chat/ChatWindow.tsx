@@ -40,15 +40,115 @@ export function ChatWindow() {
   const { messages, sendMessage, isSending, error } = useChat();
 
   const handleExportPDF = () => {
-    const doc = new jsPDF();
-    doc.text("SmartERP AI - Rapport de Chat", 10, 10);
-    let y = 20;
-    messages.forEach((m) => {
-      const prefix = m.role === "user" ? "Utilisateur: " : "Assistant: ";
-      doc.text(prefix + m.content.substring(0, 80), 10, y);
-      y += 10;
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
     });
-    doc.save("smarterp-chat.pdf");
+
+    const primaryColor = [113, 75, 103]; // Odoo Purple (#714B67)
+    const secondaryColor = [100, 116, 139]; // Slate Gray
+    const textColor = [30, 41, 59]; // Dark text
+
+    // Top Header Banner
+    doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+    doc.rect(0, 0, 210, 30, "F");
+
+    // Title & Subtitle inside the Banner
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("SmartERP AI", 15, 13);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text("Rapport Décisionnel & Analyses de l'Agent IA", 15, 21);
+
+    // Section header
+    doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text("RAPPORT D'ANALYSE IA", 15, 42);
+
+    // Header separator line
+    doc.setDrawColor(226, 232, 240); // slate-200
+    doc.setLineWidth(0.5);
+    doc.line(15, 45, 195, 45);
+
+    // Metadata block
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+    const dateStr = new Date().toLocaleString("fr-FR", {
+      dateStyle: "long",
+      timeStyle: "short",
+    });
+    doc.text(`Généré le : ${dateStr}`, 15, 51);
+    doc.text("Destinataire : Direction Générale / Management", 15, 56);
+    doc.text("Source : Écosystème SmartERP AI & Odoo 17 Cache", 15, 61);
+
+    // Metadata separator line
+    doc.line(15, 65, 195, 65);
+
+    let yPosition = 75;
+
+    messages.forEach((msg) => {
+      // Check page overflow before rendering message title
+      if (yPosition > 270) {
+        doc.addPage();
+        yPosition = 20;
+      }
+
+      const isUser = msg.role === "user";
+
+      // Message Role Label
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      if (isUser) {
+        doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+        doc.text("Question Utilisateur :", 15, yPosition);
+      } else {
+        doc.setTextColor(13, 148, 136); // Teal for AI
+        doc.text("Réponse de l'Assistant SmartERP AI :", 15, yPosition);
+      }
+      yPosition += 5.5;
+
+      // Message content with wrapping
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9.5);
+      doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+
+      const splitText = doc.splitTextToSize(msg.content, 180);
+      splitText.forEach((line: string) => {
+        if (yPosition > 278) {
+          doc.addPage();
+          yPosition = 20;
+        }
+        doc.text(line, 15, yPosition);
+        yPosition += 5;
+      });
+
+      yPosition += 6.5; // Gap between Q/A
+    });
+
+    // Add dynamic footers on all pages
+    const pageCount = doc.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
+
+      // Footer divider
+      doc.setDrawColor(241, 245, 249); // slate-100
+      doc.setLineWidth(0.3);
+      doc.line(15, 284, 195, 284);
+
+      // Confidentially note & page numbers
+      doc.text("SmartERP AI — Document Confidentiel à usage interne", 15, 289);
+      doc.text(`Page ${i} sur ${pageCount}`, 180, 289);
+    }
+
+    doc.save(`SmartERP_AI_Rapport_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
   const bottomRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
