@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import engine, Base, SessionLocal
-from app.routers import kpis, chat, auth, alerts, settings
+from app.routers import kpis, chat, auth, alerts, settings, conversations
 from app.services.kpi_sync import sync_all
 from app.models.user import User
 from app.models.alert_setting import AlertSetting
@@ -104,6 +104,7 @@ app.include_router(kpis.router)
 app.include_router(chat.router)
 app.include_router(alerts.router)
 app.include_router(settings.router)
+app.include_router(conversations.router)
 
 
 

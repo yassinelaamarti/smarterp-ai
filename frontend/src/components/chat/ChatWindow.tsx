@@ -3,8 +3,10 @@
 import { useRef, useEffect } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useChat } from "@/hooks/useChat";
+import { useConversations } from "@/hooks/useConversations";
 import { MessageBubble } from "./MessageBubble";
 import { ChatInput } from "./ChatInput";
+import { ConversationSidebar } from "./ConversationSidebar";
 import { TrendingUp, Package, AlertTriangle, Users, Sparkles, ArrowRight, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
@@ -37,7 +39,63 @@ const SUGGESTIONS = [
 ];
 
 export function ChatWindow() {
-  const { messages, sendMessage, isSending, error } = useChat();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const prompt = searchParams.get("prompt");
+  const conversationIdParam = searchParams.get("conversation");
+  const conversationId = conversationIdParam ? Number(conversationIdParam) : null;
+
+  const { conversations, isLoading: conversationsLoading, createConversation } = useConversations();
+  const { messages, sendMessage, isSending, error, conversationTitle } = useChat(conversationId);
+
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  // --- Sélection automatique d'une conversation au premier chargement ---
+  const hasInitializedRef = useRef(false);
+  useEffect(() => {
+    if (hasInitializedRef.current) return;
+    if (prompt) return; // le flux "alerte" gère sa propre création
+    if (conversationsLoading) return;
+    if (conversationId !== null) {
+      hasInitializedRef.current = true;
+      return;
+    }
+
+    hasInitializedRef.current = true;
+    if (conversations.length > 0) {
+      router.replace(`${pathname}?conversation=${conversations[0].id}`);
+    } else {
+      createConversation().then((c) => {
+        router.replace(`${pathname}?conversation=${c.id}`);
+      });
+    }
+  }, [conversationId, conversations, conversationsLoading, prompt, pathname, router, createConversation]);
+
+  // --- Flux "alerte -> question pré-remplie" (en 2 étapes) ---
+  const hasCreatedForPromptRef = useRef(false);
+  useEffect(() => {
+    if (prompt && conversationId === null && !hasCreatedForPromptRef.current) {
+      hasCreatedForPromptRef.current = true;
+      createConversation().then((c) => {
+        router.replace(`${pathname}?conversation=${c.id}&prompt=${encodeURIComponent(prompt)}`);
+      });
+    }
+  }, [prompt, conversationId, pathname, router, createConversation]);
+
+  const hasSentPromptRef = useRef(false);
+  useEffect(() => {
+    if (prompt && conversationId !== null && !hasSentPromptRef.current) {
+      hasSentPromptRef.current = true;
+      sendMessage(prompt);
+      router.replace(`${pathname}?conversation=${conversationId}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prompt, conversationId]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isSending]);
 
   const handleExportPDF = () => {
     const doc = new jsPDF({
@@ -46,15 +104,13 @@ export function ChatWindow() {
       format: "a4",
     });
 
-    const primaryColor = [113, 75, 103]; // Odoo Purple (#714B67)
-    const secondaryColor = [100, 116, 139]; // Slate Gray
-    const textColor = [30, 41, 59]; // Dark text
+    const primaryColor = [113, 75, 103];
+    const secondaryColor = [100, 116, 139];
+    const textColor = [30, 41, 59];
 
-    // Top Header Banner
     doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
     doc.rect(0, 0, 210, 30, "F");
 
-    // Title & Subtitle inside the Banner
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
@@ -63,18 +119,15 @@ export function ChatWindow() {
     doc.setFontSize(10);
     doc.text("Rapport Décisionnel & Analyses de l'Agent IA", 15, 21);
 
-    // Section header
     doc.setTextColor(textColor[0], textColor[1], textColor[2]);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
     doc.text("RAPPORT D'ANALYSE IA", 15, 42);
 
-    // Header separator line
-    doc.setDrawColor(226, 232, 240); // slate-200
+    doc.setDrawColor(226, 232, 240);
     doc.setLineWidth(0.5);
     doc.line(15, 45, 195, 45);
 
-    // Metadata block
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
@@ -85,14 +138,15 @@ export function ChatWindow() {
     doc.text(`Généré le : ${dateStr}`, 15, 51);
     doc.text("Destinataire : Direction Générale / Management", 15, 56);
     doc.text("Source : Écosystème SmartERP AI & Odoo 17 Cache", 15, 61);
+    if (conversationTitle) {
+      doc.text(`Conversation : ${conversationTitle}`, 15, 66);
+    }
 
-    // Metadata separator line
-    doc.line(15, 65, 195, 65);
+    doc.line(15, 70, 195, 70);
 
-    let yPosition = 75;
+    let yPosition = 80;
 
     messages.forEach((msg) => {
-      // Check page overflow before rendering message title
       if (yPosition > 270) {
         doc.addPage();
         yPosition = 20;
@@ -100,19 +154,17 @@ export function ChatWindow() {
 
       const isUser = msg.role === "user";
 
-      // Message Role Label
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
       if (isUser) {
         doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
         doc.text("Question Utilisateur :", 15, yPosition);
       } else {
-        doc.setTextColor(13, 148, 136); // Teal for AI
+        doc.setTextColor(13, 148, 136);
         doc.text("Réponse de l'Assistant SmartERP AI :", 15, yPosition);
       }
       yPosition += 5.5;
 
-      // Message content with wrapping
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9.5);
       doc.setTextColor(textColor[0], textColor[1], textColor[2]);
@@ -127,10 +179,9 @@ export function ChatWindow() {
         yPosition += 5;
       });
 
-      yPosition += 6.5; // Gap between Q/A
+      yPosition += 6.5;
     });
 
-    // Add dynamic footers on all pages
     const pageCount = doc.getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
@@ -138,125 +189,104 @@ export function ChatWindow() {
       doc.setFontSize(8);
       doc.setTextColor(secondaryColor[0], secondaryColor[1], secondaryColor[2]);
 
-      // Footer divider
-      doc.setDrawColor(241, 245, 249); // slate-100
+      doc.setDrawColor(241, 245, 249);
       doc.setLineWidth(0.3);
       doc.line(15, 284, 195, 284);
 
-      // Confidentially note & page numbers
       doc.text("SmartERP AI — Document Confidentiel à usage interne", 15, 289);
       doc.text(`Page ${i} sur ${pageCount}`, 180, 289);
     }
 
     doc.save(`SmartERP_AI_Rapport_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname();
-  const prompt = searchParams.get("prompt");
-
-  const hasSentRef = useRef(false);
-
-  useEffect(() => {
-    if (prompt && !hasSentRef.current) {
-      hasSentRef.current = true;
-      sendMessage(prompt);
-      // Nettoie l'URL via le router Next (pas window.history directement,
-      // pour que useSearchParams reste synchronisé correctement).
-      router.replace(pathname, { scroll: false });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prompt]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isSending]);
 
   return (
-    <div className="flex h-[calc(100vh-12rem)] flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
-      {messages.length > 0 && (
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-3 bg-slate-50/50 rounded-t-2xl">
-          <div className="flex items-center gap-2">
-            <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs font-semibold text-slate-500">Conversation active</span>
+    <div className="flex h-[calc(100vh-12rem)] gap-4">
+      <ConversationSidebar />
+
+      <div className="flex flex-1 flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+        {messages.length > 0 && (
+          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-3 bg-slate-50/50 rounded-t-2xl">
+            <div className="flex items-center gap-2">
+              <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-xs font-semibold text-slate-500">
+                {conversationTitle ?? "Conversation active"}
+              </span>
+            </div>
+            <button
+              onClick={handleExportPDF}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-2xs cursor-pointer"
+            >
+              <Download className="h-3.5 w-3.5 text-slate-400" />
+              Exporter en PDF
+            </button>
           </div>
-          <button
-            onClick={handleExportPDF}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-2xs cursor-pointer"
-          >
-            <Download className="h-3.5 w-3.5 text-slate-400" />
-            Exporter en PDF
-          </button>
+        )}
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {messages.length === 0 && (
+            <div className="flex h-full flex-col items-center justify-center text-center max-w-2xl mx-auto p-4 animate-fadeIn">
+              <div className="relative mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25">
+                <Sparkles className="h-5.5 w-5.5 animate-pulse" />
+                <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 opacity-30 blur-xs -z-10 animate-ping" style={{ animationDuration: '3s' }} />
+              </div>
+
+              <h2 className="text-xl font-bold tracking-tight text-slate-800 sm:text-2xl">
+                Assistant Virtuel SmartERP AI
+              </h2>
+              <p className="mt-2 text-xs sm:text-sm text-slate-500 font-medium max-w-md leading-relaxed">
+                Posez vos questions métier en langage naturel ou commencez par l&apos;une des suggestions ci-dessous :
+              </p>
+
+              <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+                {SUGGESTIONS.map((s, idx) => {
+                  const Icon = s.icon;
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => sendMessage(s.text)}
+                      className="group relative flex items-center gap-3.5 rounded-2xl border border-slate-250/70 bg-white p-4 text-left transition-all duration-300 hover:-translate-y-1 hover:border-blue-500 hover:shadow-md hover:shadow-blue-500/5 cursor-pointer"
+                    >
+                      <div className={cn(
+                        "flex h-9 w-9 items-center justify-center rounded-xl border flex-shrink-0 transition-transform duration-300 group-hover:scale-110",
+                        s.color
+                      )}>
+                        <Icon className="h-4.5 w-4.5" />
+                      </div>
+
+                      <div className="flex-1 min-w-0 pr-6">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{s.label}</p>
+                        <p className="text-xs sm:text-sm font-semibold text-slate-700 mt-0.5 truncate group-hover:text-blue-600 transition-colors duration-250">
+                          {s.text}
+                        </p>
+                      </div>
+
+                      <div className="absolute right-4 text-slate-300 group-hover:text-blue-500 group-hover:translate-x-1 transition-all duration-300">
+                        <ArrowRight className="h-4 w-4" />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {messages.map((m, i) => (
+            <MessageBubble key={i} role={m.role} content={m.content} />
+          ))}
+
+          {isSending && <MessageBubble role="assistant" content="" isLoading />}
+
+          {error && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+              {error}
+            </div>
+          )}
+
+          <div ref={bottomRef} />
         </div>
-      )}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {messages.length === 0 && (
-          <div className="flex h-full flex-col items-center justify-center text-center max-w-2xl mx-auto p-4 animate-fadeIn">
-            {/* Glowing Icon Container */}
-            <div className="relative mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/25">
-              <Sparkles className="h-5.5 w-5.5 animate-pulse" />
-              <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 opacity-30 blur-xs -z-10 animate-ping" style={{ animationDuration: '3s' }} />
-            </div>
 
-            <h2 className="text-xl font-bold tracking-tight text-slate-800 sm:text-2xl">
-              Assistant Virtuel SmartERP AI
-            </h2>
-            <p className="mt-2 text-xs sm:text-sm text-slate-500 font-medium max-w-md leading-relaxed">
-              Posez vos questions métier en langage naturel ou commencez par l&apos;une des suggestions ci-dessous :
-            </p>
-
-            <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
-              {SUGGESTIONS.map((s, idx) => {
-                const Icon = s.icon;
-                return (
-                  <button
-                    key={idx}
-                    onClick={() => sendMessage(s.text)}
-                    className="group relative flex items-center gap-3.5 rounded-2xl border border-slate-250/70 bg-white p-4 text-left transition-all duration-300 hover:-translate-y-1 hover:border-blue-500 hover:shadow-md hover:shadow-blue-500/5 cursor-pointer"
-                  >
-                    {/* Icon with hover micro-animation */}
-                    <div className={cn(
-                      "flex h-9 w-9 items-center justify-center rounded-xl border flex-shrink-0 transition-transform duration-300 group-hover:scale-110",
-                      s.color
-                    )}>
-                      <Icon className="h-4.5 w-4.5" />
-                    </div>
-
-                    <div className="flex-1 min-w-0 pr-6">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{s.label}</p>
-                      <p className="text-xs sm:text-sm font-semibold text-slate-700 mt-0.5 truncate group-hover:text-blue-600 transition-colors duration-250">
-                        {s.text}
-                      </p>
-                    </div>
-
-                    {/* Interactive indicator arrow */}
-                    <div className="absolute right-4 text-slate-300 group-hover:text-blue-500 group-hover:translate-x-1 transition-all duration-300">
-                      <ArrowRight className="h-4 w-4" />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {messages.map((m, i) => (
-          <MessageBubble key={i} role={m.role} content={m.content} />
-        ))}
-
-        {isSending && <MessageBubble role="assistant" content="" isLoading />}
-
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-            {error}
-          </div>
-        )}
-
-        <div ref={bottomRef} />
+        <ChatInput onSend={sendMessage} disabled={isSending || conversationId === null} />
       </div>
-
-      <ChatInput onSend={sendMessage} disabled={isSending} />
     </div>
   );
 }

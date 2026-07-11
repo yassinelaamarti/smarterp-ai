@@ -1,59 +1,79 @@
-import { useCallback } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { useChatStore, ChatMessage } from "@/store/useChatStore";
 
-async function sendChatMessage(message: string, history: ChatMessage[]): Promise<string> {
-  const { data } = await api.post<{ reply: string }>("/api/chat/", {
-    message,
-    history,
-  });
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+interface ConversationDetailResponse {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages: { role: "user" | "assistant"; content: string; created_at: string }[];
+}
+
+async function fetchConversation(id: number): Promise<ConversationDetailResponse> {
+  const { data } = await api.get<ConversationDetailResponse>(`/api/conversations/${id}`);
+  return data;
+}
+
+async function sendMessageRequest(id: number, message: string): Promise<string> {
+  const { data } = await api.post<{ conversation_id: number; reply: string }>(
+    `/api/conversations/${id}/messages`,
+    { message }
+  );
   return data.reply;
 }
 
-export function useChat() {
-  const messages = useChatStore((s) => s.messages);
-  const error = useChatStore((s) => s.error);
-  const isSending = useChatStore((s) => s.isSending);
-  const addMessage = useChatStore((s) => s.addMessage);
-  const setError = useChatStore((s) => s.setError);
-  const setSending = useChatStore((s) => s.setSending);
+export function useChat(conversationId: number | null) {
+  const queryClient = useQueryClient();
+
+  const query = useQuery({
+    queryKey: ["conversation", conversationId],
+    queryFn: () => fetchConversation(conversationId as number),
+    enabled: conversationId !== null,
+  });
 
   const mutation = useMutation({
-    mutationFn: (message: string) => sendChatMessage(message, messages),
-    onMutate: (message: string) => {
-      setError(null);
-      setSending(true);
-      addMessage({ role: "user", content: message });
+    mutationFn: (message: string) => sendMessageRequest(conversationId as number, message),
+    onMutate: async (message: string) => {
+      // Ajout optimiste du message utilisateur, pour un rendu instantané
+      // (la vraie sauvegarde arrive côté backend juste après).
+      queryClient.setQueryData<ConversationDetailResponse | undefined>(
+        ["conversation", conversationId],
+        (old) =>
+          old
+            ? {
+                ...old,
+                messages: [
+                  ...old.messages,
+                  { role: "user", content: message, created_at: new Date().toISOString() },
+                ],
+              }
+            : old
+      );
     },
-    onSuccess: (reply: string) => {
-      addMessage({ role: "assistant", content: reply });
-    },
-    onError: (err: Error) => {
-      setError(err.message ?? "Erreur de communication avec l'agent IA");
-    },
-    onSettled: () => {
-      // Se déclenche dans tous les cas (succès OU erreur) : garantit que
-      // isSending repasse à false même si la requête échoue.
-      setSending(false);
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["conversation", conversationId] });
+      queryClient.invalidateQueries({ queryKey: ["conversations"] }); // titre/tri dans la sidebar
     },
   });
 
-  const sendMessage = useCallback(
-    (message: string) => {
-      // Lit l'état le plus à jour du store (pas une valeur figée dans la
-      // closure) : bloque tout envoi si un autre composant a déjà une
-      // requête en cours, même si ce composant-ci n'en a jamais lancé lui-même.
-      if (useChatStore.getState().isSending) return;
-      mutation.mutate(message);
-    },
-    [mutation]
-  );
+  const messages: ChatMessage[] =
+    query.data?.messages.map((m) => ({ role: m.role, content: m.content })) ?? [];
+
+  const sendMessage = (message: string) => {
+    if (mutation.isPending || conversationId === null) return;
+    mutation.mutate(message);
+  };
 
   return {
     messages,
     sendMessage,
-    isSending,
-    error,
+    isSending: mutation.isPending,
+    error: mutation.error ? (mutation.error as Error).message : null,
+    conversationTitle: query.data?.title ?? null,
   };
 }
