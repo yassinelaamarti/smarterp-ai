@@ -61,3 +61,37 @@ def ask(message: str, history: list[dict] | None = None) -> str:
         max_tokens=700,
     )
     return completion.choices[0].message.content
+
+
+def generate_dashboard_summary() -> str:
+    """Génère un rapport de synthèse analytique et décisionnel complet basé sur les KPIs actuels."""
+    context = _build_context()
+    
+    prompt = """En tant qu'expert en business intelligence et conseiller stratégique pour PME, rédige un rapport de synthèse analytique et décisionnel basé sur les indicateurs de performance (KPIs) de l'entreprise.
+
+Ton rapport doit être rédigé en français, avec un ton professionnel, structuré, persuasif et orienté vers l'action. Utilise uniquement les données chiffrées fournies dans le contexte ci-dessous. Ne crée aucune donnée imaginaire.
+
+Structure ton rapport de la manière suivante avec des titres clairs en Markdown :
+1. **Synthèse de Performance Globale** : Un résumé exécutif clair de la santé générale de l'entreprise.
+2. **Analyse Détaillée par Axe** :
+   - **Performance Financière & Commerciale** (CA, Commandes, Panier Moyen, Leads, Conversion, Pipeline)
+   - **Performance Opérationnelle** (Alertes stock, Valorisation, Commandes en retard)
+3. **Risques & Points de Vigilance** : Identification claire des menaces (retards de livraison, ruptures de stocks, baisse de tendance) avec leur criticité.
+4. **Recommandations Stratégiques Actionnables** : 3 à 4 actions concrètes et réalistes à court terme pour améliorer la situation commerciale ou opérationnelle.
+
+Voici les indicateurs actuels :
+{context}
+"""
+    messages = [
+        {"role": "system", "content": "Tu es le conseiller stratégique virtuel de SmartERP AI. Tu rédiges des rapports décisionnels professionnels en français."},
+        {"role": "user", "content": prompt.format(context=context)}
+    ]
+    
+    completion = _client.chat.completions.create(
+        model=settings.groq_model,
+        messages=messages,
+        temperature=0.3,
+        max_tokens=1500,
+    )
+    return completion.choices[0].message.content
+

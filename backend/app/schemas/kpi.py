@@ -9,3 +9,8 @@ class KPI(BaseModel):
     unit: Optional[str] = None
     trend: Optional[Literal["up", "down", "stable"]] = None
     change_percent: Optional[float] = None
+
+
+class AISummaryResponse(BaseModel):
+    summary: str
+

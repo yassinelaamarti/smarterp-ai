@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from app.database import SessionLocal
-from app.schemas.kpi import KPI
+from app.schemas.kpi import KPI, AISummaryResponse
 from app.schemas.revenue import RevenuePoint
 from app.services.kpi_calculator import get_kpis, get_monthly_revenue_history
 from app.services.kpi_sync import sync_all, seed_demo_previous_month
@@ -49,3 +49,18 @@ def trigger_seed_demo_history(current_user: User = Depends(get_current_active_us
     finally:
         db.close()
     return {"status": "demo history seeded"}
+
+
+@router.get("/ai-summary", response_model=AISummaryResponse)
+def get_ai_summary(current_user: User = Depends(get_current_active_user)):
+    """Génère une synthèse décisionnelle rédigée par l'agent IA à partir des KPIs."""
+    try:
+        from app.services.ai_agent import generate_dashboard_summary
+        summary_text = generate_dashboard_summary()
+        return AISummaryResponse(summary=summary_text)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Erreur lors de la génération de la synthèse par l'agent IA : {e}"
+        )
+
