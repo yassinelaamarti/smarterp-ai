@@ -9,8 +9,12 @@ import {
   Save,
   RefreshCw,
   AlertTriangle,
+  Mail,
+  Calendar,
+  Send,
 } from "lucide-react";
 import { useSettings, AlertSetting } from "@/hooks/useSettings";
+import { useReportSchedule } from "@/hooks/useReportSchedule";
 
 export default function SettingsPage() {
   const {
@@ -23,14 +27,56 @@ export default function SettingsPage() {
     resetSaveState,
   } = useSettings();
 
+  const {
+    schedule: reportSchedule,
+    isLoading: isReportLoading,
+    save: saveReportSchedule,
+    isSaving: isSavingReport,
+    isSaveSuccess: isReportSaveSuccess,
+    triggerTest: triggerTestReport,
+    isTesting: isTestingReport,
+    testSuccess: testReportSuccess,
+    testData: testReportData,
+    resetTestState: resetTestState,
+    resetSaveState: resetReportSaveState,
+  } = useReportSchedule();
+
   const [localSettings, setLocalSettings] = useState<AlertSetting[]>([]);
   const [resetSuccess, setResetSuccess] = useState(false);
+
+  const [reportEmail, setReportEmail] = useState("");
+  const [reportPeriod, setReportPeriod] = useState<"none" | "daily" | "weekly" | "monthly">("none");
 
   useEffect(() => {
     if (settings) {
       setLocalSettings(JSON.parse(JSON.stringify(settings)));
     }
   }, [settings]);
+
+  useEffect(() => {
+    if (reportSchedule) {
+      setReportEmail(reportSchedule.report_email || "");
+      setReportPeriod(reportSchedule.report_schedule || "none");
+    }
+  }, [reportSchedule]);
+
+  useEffect(() => {
+    if (isReportSaveSuccess) {
+      const timer = setTimeout(() => {
+        resetReportSaveState();
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [isReportSaveSuccess, resetReportSaveState]);
+
+  useEffect(() => {
+    if (testReportSuccess) {
+      const timer = setTimeout(() => {
+        resetTestState();
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [testReportSuccess, resetTestState]);
 
   useEffect(() => {
     if (isSaveSuccess) {
@@ -70,6 +116,10 @@ export default function SettingsPage() {
     e.preventDefault();
     setResetSuccess(false);
     save(localSettings);
+    saveReportSchedule({
+      report_schedule: reportPeriod,
+      report_email: reportEmail || null
+    });
   };
 
 
@@ -106,7 +156,7 @@ export default function SettingsPage() {
     );
   };
 
-  if (isLoading) {
+  if (isLoading || isReportLoading) {
     return (
       <div className="flex h-[60vh] flex-col items-center justify-center gap-3">
         <RefreshCw className="h-6 w-6 animate-spin text-blue-600" />
@@ -135,17 +185,23 @@ export default function SettingsPage() {
       )}
 
       {/* Floating Success Toast */}
-      {(isSaveSuccess || resetSuccess) && (
+      {(isSaveSuccess || isReportSaveSuccess || resetSuccess || testReportSuccess) && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-xl border border-slate-200 bg-white/95 backdrop-blur-md px-4 py-3 text-sm font-semibold shadow-lg max-w-md w-[90%] sm:w-auto animate-fadeIn transition-all duration-300">
-          <CheckCircle className={`h-5 w-5 flex-shrink-0 ${isSaveSuccess ? "text-emerald-600" : "text-blue-600"}`} />
+          <CheckCircle className={`h-5 w-5 flex-shrink-0 ${isSaveSuccess || isReportSaveSuccess || testReportSuccess ? "text-emerald-600" : "text-blue-600"}`} />
           <div className="text-left">
-            <p className={`font-semibold ${isSaveSuccess ? "text-slate-800" : "text-slate-800"}`}>
-              {isSaveSuccess ? "Sauvegarde réussie !" : "Réinitialisation réussie !"}
+            <p className="font-semibold text-slate-800">
+              {testReportSuccess 
+                ? "Test d'envoi réussi !" 
+                : isSaveSuccess || isReportSaveSuccess 
+                  ? "Sauvegarde réussie !" 
+                  : "Réinitialisation réussie !"}
             </p>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              {isSaveSuccess 
-                ? "La configuration a été mise à jour et appliquée." 
-                : "Les valeurs enregistrées ont été restaurées."}
+              {testReportSuccess 
+                ? "Le rapport PDF a été généré avec succès (vérifiez le dossier test_reports)." 
+                : isSaveSuccess || isReportSaveSuccess
+                  ? "La configuration a été mise à jour et appliquée." 
+                  : "Les valeurs enregistrées ont été restaurées."}
             </p>
           </div>
         </div>
@@ -210,6 +266,93 @@ export default function SettingsPage() {
             {renderInput("pipeline_value_critical", "Valeur du pipeline (Critique)", "Vide important sur les futures rentrées potentielles.", "%")}
             {renderInput("active_customers_warning", "Clients actifs (Avertissement)", "Perte de dynamisme ou baisse du nombre de clients facturés ce mois.", "%")}
             {renderInput("active_customers_critical", "Clients actifs (Critique)", "Désengagement client nécessitant des actions de fidélisation.", "%")}
+          </div>
+        </div>
+
+        {/* Section 4: Rapports Programmés par E-mail */}
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+          <div className="flex items-center gap-2.5 border-b border-slate-100 pb-4 mb-5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+              <Mail className="h-4.5 w-4.5" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-slate-800">Rapports Stratégiques Programmés</h2>
+              <p className="text-[11px] text-slate-400 font-medium">Configurez l&apos;envoi automatique de rapports de synthèse décisionnelle au format PDF</p>
+            </div>
+          </div>
+          
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* Email de destination */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Adresse e-mail de réception
+              </label>
+              <div className="relative rounded-lg shadow-2xs">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                  <Mail className="h-4 w-4" />
+                </div>
+                <input
+                  type="email"
+                  value={reportEmail}
+                  onChange={(e) => setReportEmail(e.target.value)}
+                  placeholder="directeur@smarterp.ai"
+                  className="block w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium placeholder-slate-400"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 font-medium">
+                Si ce champ est vide, les rapports seront envoyés à l&apos;adresse de votre compte principal.
+              </p>
+            </div>
+
+            {/* Périodicité */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Fréquence de planification
+              </label>
+              <div className="relative rounded-lg shadow-2xs">
+                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                  <Calendar className="h-4 w-4" />
+                </div>
+                <select
+                  value={reportPeriod}
+                  onChange={(e) => setReportPeriod(e.target.value as any)}
+                  className="block w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium cursor-pointer"
+                >
+                  <option value="none">Désactivé</option>
+                  <option value="daily">Quotidien (Pour tests)</option>
+                  <option value="weekly">Hebdomadaire</option>
+                  <option value="monthly">Mensuel</option>
+                </select>
+              </div>
+              <p className="text-[10px] text-slate-400 font-medium">
+                Les rapports seront générés automatiquement et envoyés à la fréquence sélectionnée.
+              </p>
+            </div>
+          </div>
+
+          {/* Bouton de test immédiat */}
+          <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="text-xs text-slate-500 font-medium">
+              Vous souhaitez valider l&apos;envoi immédiatement ? Lancez une simulation ou un test réel.
+            </div>
+            <button
+              type="button"
+              onClick={() => triggerTestReport()}
+              disabled={isTestingReport}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 px-4 py-2 transition-all cursor-pointer disabled:opacity-50"
+            >
+              {isTestingReport ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-500" />
+                  Génération du PDF...
+                </>
+              ) : (
+                <>
+                  <Send className="h-3.5 w-3.5 text-slate-500" />
+                  Tester l&apos;envoi immédiat
+                </>
+              )}
+            </button>
           </div>
         </div>
 

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.alert_setting import AlertSetting
-from app.schemas.settings import AlertSettingSchema, AlertSettingsUpdate
+from app.schemas.settings import AlertSettingSchema, AlertSettingsUpdate, ReportScheduleSchema
 from app.services.auth import get_current_active_user
 from app.models.user import User
 
@@ -57,3 +57,54 @@ def update_settings(
             status_code=500,
             detail=f"Erreur lors de la mise à jour des paramètres : {e}"
         )
+
+
+@router.get("/report-schedule", response_model=ReportScheduleSchema)
+def get_report_schedule(current_user: User = Depends(get_current_active_user)):
+    """Récupère la configuration de planification de rapports pour l'utilisateur connecté."""
+    return {
+        "report_schedule": current_user.report_schedule or "none",
+        "report_email": current_user.report_email or current_user.email
+    }
+
+
+@router.put("/report-schedule", response_model=ReportScheduleSchema)
+def update_report_schedule(
+    payload: ReportScheduleSchema,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Met à jour la configuration de planification de rapports pour l'utilisateur connecté."""
+    try:
+        current_user.report_schedule = payload.report_schedule
+        current_user.report_email = payload.report_email
+        db.commit()
+        db.refresh(current_user)
+        return {
+            "report_schedule": current_user.report_schedule,
+            "report_email": current_user.report_email
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de la mise à jour de la planification : {e}"
+        )
+
+
+@router.post("/report-schedule/trigger-test")
+def trigger_test_report(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Génère et envoie immédiatement un rapport de test à l'utilisateur connecté."""
+    from app.services.report_scheduler import send_single_report
+    success = send_single_report(db, current_user)
+    if success:
+        return {"status": "success", "message": "Rapport de test généré et envoyé (ou simulé) avec succès."}
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Erreur lors du déclenchement du rapport de test."
+        )
+

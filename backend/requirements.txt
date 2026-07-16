@@ -10,4 +10,7 @@ groq
 pyjwt==2.8.0
 bcrypt==4.1.2
 python-multipart==0.0.9
-passlib==1.7.4
+passlib==1.7.4
+fpdf2==2.7.9
+apscheduler==3.10.4
+

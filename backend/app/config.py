@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 10080  # 7 jours
 
+    # SMTP (Email Reports)
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "noreply@smarterp.ai"
+
     class Config:
         env_file = ".env"
         extra = "ignore"

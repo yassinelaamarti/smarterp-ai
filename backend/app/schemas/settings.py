@@ -8,5 +8,12 @@ class AlertSettingSchema(BaseModel):
     class Config:
         from_attributes = True
 
+from typing import Literal
+
 class AlertSettingsUpdate(BaseModel):
     settings: list[AlertSettingSchema]
+
+class ReportScheduleSchema(BaseModel):
+    report_schedule: Literal["none", "daily", "weekly", "monthly"]
+    report_email: str | None = None
+

@@ -30,6 +30,26 @@ async def _sync_loop():
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     
+    # Auto-migration des colonnes pour les rapports programmés
+    db_mig = SessionLocal()
+    try:
+        from sqlalchemy import text
+        for col_name, col_type in [
+            ("report_schedule", "VARCHAR DEFAULT 'none'"),
+            ("report_email", "VARCHAR"),
+            ("last_report_sent", "VARCHAR")
+        ]:
+            try:
+                db_mig.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}"))
+                db_mig.commit()
+                logger.info(f"Colonne {col_name} ajoutée avec succès à la table users.")
+            except Exception:
+                db_mig.rollback()
+    except Exception as e:
+        logger.error(f"Erreur lors de la migration des colonnes users: {e}")
+    finally:
+        db_mig.close()
+    
     # Seeder l'utilisateur admin par défaut s'il n'y a pas d'utilisateurs
     db = SessionLocal()
     try:
@@ -86,7 +106,16 @@ async def lifespan(app: FastAPI):
     global _background_task
     _background_task = asyncio.create_task(_sync_loop())
 
+    # Initialisation du planificateur de rapports
+    from app.services.report_scheduler import setup_scheduler
+    setup_scheduler(app)
+
     yield
+
+    # Arrêt du planificateur de rapports
+    if hasattr(app.state, "scheduler") and app.state.scheduler:
+        app.state.scheduler.shutdown()
+        logger.info("Planificateur de rapports arrêté.")
 
     if _background_task:
         _background_task.cancel()
