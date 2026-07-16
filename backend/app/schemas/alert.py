@@ -7,3 +7,5 @@ class Alert(BaseModel):
     kpi_id: str
     severity: Literal["warning", "critical"]
     message: str
+    is_anomaly: bool = False
+

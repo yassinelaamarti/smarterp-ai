@@ -6,6 +6,7 @@ export interface Alert {
   kpiId: string;
   severity: "warning" | "critical";
   message: string;
+  isAnomaly: boolean;
 }
 
 interface AlertApiResponse {
@@ -13,6 +14,7 @@ interface AlertApiResponse {
   kpi_id: string;
   severity: "warning" | "critical";
   message: string;
+  is_anomaly: boolean;
 }
 
 async function fetchAlerts(): Promise<Alert[]> {
@@ -22,6 +24,7 @@ async function fetchAlerts(): Promise<Alert[]> {
     kpiId: a.kpi_id,
     severity: a.severity,
     message: a.message,
+    isAnomaly: a.is_anomaly || false,
   }));
 }
 

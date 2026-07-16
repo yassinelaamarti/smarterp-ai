@@ -10,6 +10,9 @@ from groq import Groq
 from app.config import settings
 from app.services.kpi_calculator import get_kpis
 from app.services.health_score_engine import compute_health_score
+from app.services.alert_engine import evaluate_alerts
+from app.database import SessionLocal
+from app.models.alert_setting import AlertSetting
 
 _client = Groq(api_key=settings.groq_api_key)
 
@@ -18,16 +21,16 @@ utilisée par une PME marocaine.
 
 RÈGLES STRICTES (à respecter absolument) :
 1. Réponds toujours en français, de façon claire et concise.
-2. N'utilise QUE les chiffres et indicateurs listés ci-dessous (y compris le score de santé global et ses facteurs). N'invente JAMAIS une valeur, \
+2. N'utilise QUE les chiffres et indicateurs listés ci-dessous (y compris le score de santé global, ses facteurs, et les alertes/anomalies). N'invente JAMAIS une valeur, \
 un pourcentage, un nom de client ou de produit qui n'y figure pas.
 3. Si la question porte sur une donnée absente de cette liste (un client précis, \
 un produit précis, une période non couverte, etc.), dis explicitement que tu ne \
 disposes pas de cette information, plutôt que de deviner ou d'extrapoler.
 4. Tu peux proposer des recommandations générales et raisonnables basées sur les \
 tendances observées, mais distingue clairement un fait chiffré d'une recommandation.
-5. Intègre et commente le score de santé global (0-100) pour justifier tes analyses de santé ou tes diagnostics si l'utilisateur te pose des questions sur la situation de l'entreprise.
+5. Intègre et commente le score de santé global (0-100) ainsi que les alertes et anomalies actives détectées pour justifier tes analyses de santé ou tes diagnostics si l'utilisateur te pose des questions sur la situation de l'entreprise ou sur une alerte spécifique.
 
-Voici le score de santé global de l'entreprise, ses facteurs d'explication et les indicateurs clés (KPIs) actuels de l'entreprise, seules données fiables \
+Voici le score de santé global de l'entreprise, ses facteurs d'explication, les alertes/anomalies détectées par l'IA et les indicateurs clés (KPIs) actuels de l'entreprise, seules données fiables \
 à ta disposition :
 {context}
 """
@@ -59,7 +62,28 @@ def _build_context() -> str:
             lines.append(line)
         kpis_str = "\n".join(lines)
 
-    return f"{health_str}\nIndicateurs clés (KPIs) :\n{kpis_str}"
+    # 3. Récupérer les alertes et anomalies actives
+    try:
+        db = SessionLocal()
+        settings_db = db.query(AlertSetting).all()
+        settings_dict = {s.key: s.value for s in settings_db}
+        alerts = evaluate_alerts(kpis, settings_dict, db=db)
+        if alerts:
+            alerts_lines = []
+            for alert in alerts:
+                type_label = "[ANOMALIE IA]" if alert.is_anomaly else "[SEUIL DÉPASSÉ]"
+                alerts_lines.append(f"  * {type_label} (Sévérité: {alert.severity}) : {alert.message}")
+            alerts_str = "Alertes et Anomalies actives :\n" + "\n".join(alerts_lines) + "\n"
+        else:
+            alerts_str = "Alertes et Anomalies actives : Aucune alerte ou anomalie active.\n"
+    except Exception as e:
+        alerts_str = f"Alertes et Anomalies actives : Non disponible (erreur: {e})\n"
+    finally:
+        if 'db' in locals():
+            db.close()
+
+    return f"{health_str}\n{alerts_str}\nIndicateurs clés (KPIs) :\n{kpis_str}"
+
 
 
 def ask(message: str, history: list[dict] | None = None) -> str:

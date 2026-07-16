@@ -11,6 +11,7 @@ from app.routers import kpis, chat, auth, alerts, settings, conversations, healt
 from app.services.kpi_sync import sync_all
 from app.models.user import User
 from app.models.alert_setting import AlertSetting
+from app.models.kpi_cache import KPIHistoryCache
 from app.services.auth import get_password_hash
 
 logging.basicConfig(level=logging.INFO)
@@ -68,6 +69,13 @@ async def lifespan(app: FastAPI):
             db.add_all(default_settings)
             db.commit()
             logger.info("Default alert settings seeded.")
+
+        # Seeder l'historique de démo s'il est vide
+        history_exists = db.query(KPIHistoryCache).first()
+        if not history_exists:
+            from app.services.kpi_sync import seed_demo_history
+            seed_demo_history(db)
+            logger.info("Demo KPI history seeded for anomaly detection.")
     except Exception as e:
         logger.error(f"Error during seeding: {e}")
     finally:

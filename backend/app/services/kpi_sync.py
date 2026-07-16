@@ -81,3 +81,42 @@ def seed_demo_previous_month(db: Session) -> None:
         factor = random.uniform(0.82, 1.18)
         db.merge(KPIHistoryCache(kpi_id=row.id, month=month, value=round(row.value * factor, 2)))
     db.commit()
+
+
+def seed_demo_history(db: Session, months: int = 6) -> None:
+    """
+    Génère un historique factice sur plusieurs mois passés pour tous les KPIs actuels,
+    permettant de tester l'analyse de tendance et la détection d'anomalies statistiques.
+    """
+    current_rows = db.query(KPICache).all()
+    if not current_rows:
+        return
+        
+    import datetime
+    today = datetime.date.today()
+    
+    for row in current_rows:
+        base_value = row.value
+        # Si c'est le CA ou les commandes en retard, on décale l'historique
+        # pour provoquer une anomalie statistique sur la valeur actuelle.
+        if row.id == "revenue":
+            # Valeur actuelle élevée -> historique bas
+            historical_base = base_value * 0.5  # la valeur actuelle sera un pic à +100%
+        elif row.id == "late_orders":
+            # Valeur actuelle élevée (ex: 12) -> historique très bas (ex: 1)
+            historical_base = 1.0
+        else:
+            historical_base = base_value
+            
+        for i in range(1, months + 1):
+            total_months = today.month - 1 - i
+            year = today.year + total_months // 12
+            month_idx = total_months % 12 + 1
+            month_str = f"{year:04d}-{month_idx:02d}"
+            
+            factor = random.uniform(0.9, 1.1)
+            val = historical_base * factor
+            db.merge(KPIHistoryCache(kpi_id=row.id, month=month_str, value=round(val, 2)))
+            
+    db.commit()
+

@@ -37,9 +37,15 @@ CATEGORY_PENALTIES = {
 DEFAULT_PENALTIES = {"critical": 15, "warning": 5, "label": "Général"}
 
 
+from app.database import SessionLocal
+
 def compute_health_score() -> HealthScore:
-    kpis = get_kpis()
-    alerts = evaluate_alerts(kpis)
+    db = SessionLocal()
+    try:
+        kpis = get_kpis()
+        alerts = evaluate_alerts(kpis, db=db)
+    finally:
+        db.close()
 
     score = 100.0
     factors: list[HealthScoreFactor] = []

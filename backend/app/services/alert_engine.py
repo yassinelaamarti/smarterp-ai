@@ -48,7 +48,11 @@ def _check_trend_drop(kpi: KPI, critical_at: float, warning_at: float, label: st
     return None
 
 
-def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None) -> list[Alert]:
+from sqlalchemy.orm import Session
+from app.models.kpi_cache import KPIHistoryCache
+from app.services.date_utils import current_month_str
+
+def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, db: Session | None = None) -> list[Alert]:
     if settings is None:
         settings = {
             "stock_critical": 10.0,
@@ -88,6 +92,42 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None) -
 
         if result:
             severity, message = result
-            alerts.append(Alert(id=kpi.id, kpi_id=kpi.id, severity=severity, message=message))
+            alerts.append(Alert(id=kpi.id, kpi_id=kpi.id, severity=severity, message=message, is_anomaly=False))
+
+    # Détection d'anomalies statistiques par l'IA
+    if db is not None:
+        cur_month = current_month_str()
+        for kpi in kpis:
+            # Récupérer l'historique des mois précédents uniquement (exclure le mois en cours)
+            history_records = (
+                db.query(KPIHistoryCache)
+                .filter(KPIHistoryCache.kpi_id == kpi.id, KPIHistoryCache.month != cur_month)
+                .all()
+            )
+            history_values = [r.value for r in history_records]
+
+            if len(history_values) >= 3:
+                import math
+                n = len(history_values)
+                mean = sum(history_values) / n
+                variance = sum((x - mean) ** 2 for x in history_values) / n
+                std_dev = math.sqrt(variance)
+
+                if std_dev > 0:
+                    z_score = (kpi.value - mean) / std_dev
+                    # Seuil d'anomalie à 1.8 pour les petits échantillons de démo
+                    if abs(z_score) >= 1.8:
+                        severity = "critical" if abs(z_score) >= 2.2 else "warning"
+                        direction = "Hausse" if z_score > 0 else "Baisse"
+                        message = f"[Anomalie IA] {direction} anormale détectée pour {kpi.label.lower()} : la valeur actuelle ({kpi.value} {kpi.unit or ''}) s'écarte significativement de l'historique (Z-score: {z_score:+.2f}, moyenne: {mean:.1f})."
+                        alerts.append(Alert(
+                            id=f"anomaly_{kpi.id}",
+                            kpi_id=kpi.id,
+                            severity=severity,
+                            message=message,
+                            is_anomaly=True
+                        ))
+
     return alerts
+
 
