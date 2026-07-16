@@ -5,6 +5,7 @@ import { KPIGrid } from "@/components/dashboard/KPIGrid";
 import { RevenueChart } from "@/components/dashboard/RevenueChart";
 import { AlertBanner } from "@/components/dashboard/AlertBanner";
 import { AISummaryModal } from "@/components/dashboard/AISummaryModal";
+import { HealthScoreCard } from "@/components/dashboard/HealthScoreCard";
 import { Sparkles } from "lucide-react";
 
 export default function DashboardPage() {
@@ -29,6 +30,10 @@ export default function DashboardPage() {
           <Sparkles className="h-4.5 w-4.5" />
           Synthèse IA
         </button>
+      </div>
+
+      <div className="mt-6">
+        <HealthScoreCard />
       </div>
 
       <div className="mt-6">
