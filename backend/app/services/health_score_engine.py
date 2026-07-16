@@ -18,6 +18,25 @@ MAX_REVENUE_PENALTY = 15
 MAX_REVENUE_BONUS = 5
 
 
+KPI_CATEGORIES = {
+    "revenue": "finance",
+    "new_orders": "finance",
+    "stock_alerts": "operations",
+    "late_orders": "operations",
+    "conversion_rate": "crm",
+    "pipeline_value": "crm",
+    "active_customers": "crm",
+}
+
+CATEGORY_PENALTIES = {
+    "finance": {"critical": 20, "warning": 8, "label": "Finance"},
+    "operations": {"critical": 15, "warning": 5, "label": "Opérations"},
+    "crm": {"critical": 10, "warning": 3, "label": "CRM"},
+}
+
+DEFAULT_PENALTIES = {"critical": 15, "warning": 5, "label": "Général"}
+
+
 def compute_health_score() -> HealthScore:
     kpis = get_kpis()
     alerts = evaluate_alerts(kpis)
@@ -25,39 +44,36 @@ def compute_health_score() -> HealthScore:
     score = 100.0
     factors: list[HealthScoreFactor] = []
 
-    critical_count = sum(1 for a in alerts if a.severity == "critical")
-    warning_count = sum(1 for a in alerts if a.severity == "warning")
-
-    if critical_count:
-        impact = -CRITICAL_ALERT_PENALTY * critical_count
+    # Calcul des pénalités basées sur les catégories d'alertes actives
+    for alert in alerts:
+        kpi_id = alert.kpi_id
+        severity = alert.severity  # 'critical' or 'warning'
+        
+        category = KPI_CATEGORIES.get(kpi_id)
+        penalties = CATEGORY_PENALTIES.get(category, DEFAULT_PENALTIES) if category else DEFAULT_PENALTIES
+        penalty_value = penalties.get(severity, 5)
+        
+        impact = -penalty_value
         score += impact
+        
+        cat_label = penalties["label"]
         factors.append(HealthScoreFactor(
-            label=f"{critical_count} alerte(s) critique(s) active(s)",
+            label=f"[{cat_label}] {alert.message}",
             impact=impact,
         ))
 
-    if warning_count:
-        impact = -WARNING_ALERT_PENALTY * warning_count
-        score += impact
-        factors.append(HealthScoreFactor(
-            label=f"{warning_count} alerte(s) d'avertissement active(s)",
-            impact=impact,
-        ))
-
+    # Bonus/Pénalité sur l'évolution du Chiffre d'Affaires (CA)
     revenue = next((k for k in kpis if k.id == "revenue"), None)
     if revenue and revenue.change_percent is not None:
         if revenue.change_percent < 0:
-            impact = -round(min(abs(revenue.change_percent) * 0.5, MAX_REVENUE_PENALTY), 1)
-            score += impact
-            factors.append(HealthScoreFactor(
-                label=f"Chiffre d'affaires en baisse de {abs(revenue.change_percent)}%",
-                impact=impact,
-            ))
+            # La baisse est déjà capturée par l'alerte de baisse du CA si elle dépasse les seuils,
+            # mais on peut ajouter un ajustement fin ou un bonus en cas de hausse.
+            pass
         elif revenue.change_percent > 0:
             impact = round(min(revenue.change_percent * 0.2, MAX_REVENUE_BONUS), 1)
             score += impact
             factors.append(HealthScoreFactor(
-                label=f"Chiffre d'affaires en hausse de {revenue.change_percent}%",
+                label=f"[Finance] Chiffre d'affaires en hausse de {revenue.change_percent}%",
                 impact=impact,
             ))
 
@@ -76,3 +92,4 @@ def compute_health_score() -> HealthScore:
         factors.append(HealthScoreFactor(label="Aucun signal notable détecté", impact=0))
 
     return HealthScore(score=score_int, label=label, factors=factors)
+
