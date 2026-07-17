@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings
+from app.config import settings as config_settings
 from app.database import engine, Base, SessionLocal
 from app.routers import kpis, chat, auth, alerts, settings, conversations, health_score
 from app.services.kpi_sync import sync_all
@@ -22,7 +22,7 @@ _background_task: asyncio.Task | None = None
 
 async def _sync_loop():
     while True:
-        await asyncio.sleep(settings.sync_interval_seconds)
+        await asyncio.sleep(config_settings.sync_interval_seconds)
         await asyncio.to_thread(sync_all)
 
 

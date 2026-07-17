@@ -93,6 +93,14 @@ def generate_pdf_report(summary: str) -> bytes:
     pdf.line(15, 68, 195, 68)
     pdf.set_y(75)
     
+    # Remplacer les caractères non supportés par la police Helvetica standard
+    summary = (
+        summary.replace("œ", "oe")
+        .replace("Œ", "Oe")
+        .replace("’", "'")
+        .replace("\xa0", " ")
+    )
+    
     # Contenu du rapport
     lines = summary.split("\n")
     pdf.set_font("Helvetica", style="", size=10)
