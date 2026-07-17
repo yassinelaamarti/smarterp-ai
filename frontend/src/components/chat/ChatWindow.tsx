@@ -1,15 +1,17 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useChat } from "@/hooks/useChat";
 import { useConversations } from "@/hooks/useConversations";
 import { MessageBubble } from "./MessageBubble";
 import { ChatInput } from "./ChatInput";
 import { ConversationSidebar } from "./ConversationSidebar";
-import { TrendingUp, Package, AlertTriangle, Users, Sparkles, ArrowRight, Download } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { TrendingUp, Package, AlertTriangle, Users, Sparkles, ArrowRight, Download, Database, X, ChevronDown, ChevronUp } from "lucide-react";
+import { cn, translateOdooModel, translateOdooDomain } from "@/lib/utils";
 import { jsPDF } from "jspdf";
+import { useKpis } from "@/hooks/useKpis";
+
 
 const SUGGESTIONS = [
   {
@@ -50,6 +52,9 @@ export function ChatWindow() {
   const { messages, sendMessage, isSending, error, conversationTitle } = useChat(conversationId);
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [showSources, setShowSources] = useState(false);
+  const [expandedKpiIds, setExpandedKpiIds] = useState<{ [id: string]: boolean }>({});
+  const { data: kpis } = useKpis();
 
   // --- Sélection automatique d'une conversation au premier chargement ---
   const hasInitializedRef = useRef(false);
@@ -205,23 +210,32 @@ export function ChatWindow() {
       <ConversationSidebar />
 
       <div className="flex flex-1 flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
-        {messages.length > 0 && (
-          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-3 bg-slate-50/50 rounded-t-2xl">
-            <div className="flex items-center gap-2">
-              <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-xs font-semibold text-slate-500">
-                {conversationTitle ?? "Conversation active"}
-              </span>
-            </div>
-            <button
-              onClick={handleExportPDF}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-2xs cursor-pointer"
-            >
-              <Download className="h-3.5 w-3.5 text-slate-400" />
-              Exporter en PDF
-            </button>
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-3 bg-slate-50/50 rounded-t-2xl">
+          <div className="flex items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-xs font-semibold text-slate-500">
+              {messages.length > 0 ? (conversationTitle ?? "Conversation active") : "Nouvelle conversation"}
+            </span>
           </div>
-        )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowSources(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-950 transition-colors shadow-2xs cursor-pointer"
+            >
+              <Database className="h-3.5 w-3.5 text-blue-500" />
+              Données sources
+            </button>
+            {messages.length > 0 && (
+              <button
+                onClick={handleExportPDF}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-2xs cursor-pointer"
+              >
+                <Download className="h-3.5 w-3.5 text-slate-400" />
+                Exporter en PDF
+              </button>
+            )}
+          </div>
+        </div>
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {messages.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center text-center max-w-2xl mx-auto p-4 animate-fadeIn">
@@ -287,6 +301,88 @@ export function ChatWindow() {
 
         <ChatInput onSend={sendMessage} disabled={isSending || conversationId === null} />
       </div>
+
+      {showSources && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+          <div className="relative flex flex-col w-full max-w-2xl max-h-[80vh] bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden animate-scaleIn">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <Database className="h-4.5 w-4.5 text-blue-600 animate-pulse" />
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-slate-800">Base de données source (KPIs)</h3>
+                  <p className="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">Données transmises à l'agent IA</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowSources(false)}
+                className="p-1 rounded-lg hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-thin">
+              <p className="text-[11px] leading-relaxed text-slate-650 bg-emerald-50 text-emerald-950 p-3 rounded-lg border border-emerald-100">
+                ℹ️ <strong>Transparence de l'IA :</strong> Ces 10 indicateurs de performance sont injectés directement dans le contexte système de l'agent conversationnel pour chaque message. L'agent s'appuie exclusivement sur ces données auditées pour éviter toute hallucination.
+              </p>
+              
+              <div className="grid grid-cols-1 gap-3">
+                {kpis?.map((kpi) => {
+                  const isTechExpanded = !!expandedKpiIds[kpi.id];
+                  return (
+                    <div key={kpi.id} className="border border-slate-200 rounded-xl p-3 bg-white hover:border-slate-300 transition-all">
+                      <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                        <span className="font-bold text-xs text-slate-800">{kpi.label}</span>
+                        <span className="font-mono text-xs font-bold text-blue-600">
+                          {new Intl.NumberFormat("fr-FR").format(kpi.value)} {kpi.unit || ""}
+                        </span>
+                      </div>
+                      {kpi.sourceData && (
+                        <div className="mt-2 text-[10px] sm:text-xs text-slate-650 space-y-2">
+                          <div className="flex gap-2">
+                            <span className="font-bold text-slate-400 w-20 flex-shrink-0">Source :</span>
+                            <span className="font-medium text-slate-700">{translateOdooModel(kpi.sourceData.model)}</span>
+                          </div>
+                          <div className="flex gap-2">
+                            <span className="font-bold text-slate-400 w-20 flex-shrink-0">Sélection :</span>
+                            <div className="font-medium text-slate-700">
+                              <ul className="list-disc pl-4 space-y-0.5">
+                                {translateOdooDomain(kpi.sourceData.domain).map((f, i) => (
+                                  <li key={i}>{f}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+                          <div className="flex gap-2 pb-1">
+                            <span className="font-bold text-slate-400 w-20 flex-shrink-0">Règle :</span>
+                            <span className="font-semibold text-slate-700">{kpi.sourceData.formula}</span>
+                          </div>
+                          
+                          <div className="border-t border-slate-100 pt-2">
+                            <button
+                              onClick={() => setExpandedKpiIds((prev) => ({ ...prev, [kpi.id]: !prev[kpi.id] }))}
+                              className="flex items-center justify-between w-full text-[9px] sm:text-[10px] font-bold text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                            >
+                              <span>Requête technique Odoo</span>
+                              {isTechExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                            </button>
+                            {isTechExpanded && (
+                              <div className="mt-1.5 bg-slate-900 text-slate-200 p-2 rounded-lg font-mono text-[9px] sm:text-[10px] space-y-1 overflow-x-auto border border-slate-800 shadow-inner">
+                                <div><span className="text-cyan-400">Modèle :</span> "{kpi.sourceData.model}"</div>
+                                <div><span className="text-emerald-400">Filtre :</span> {kpi.sourceData.domain}</div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

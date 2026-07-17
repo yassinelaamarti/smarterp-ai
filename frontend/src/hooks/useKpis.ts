@@ -9,6 +9,11 @@ interface KPIApiResponse {
   unit?: string;
   trend?: "up" | "down" | "stable";
   change_percent?: number;
+  source_data?: {
+    model: string;
+    domain: string;
+    formula: string;
+  };
 }
 
 async function fetchKpis(): Promise<KPI[]> {
@@ -20,6 +25,11 @@ async function fetchKpis(): Promise<KPI[]> {
     unit: kpi.unit,
     trend: kpi.trend,
     changePercent: kpi.change_percent,
+    sourceData: kpi.source_data ? {
+      model: kpi.source_data.model,
+      domain: kpi.source_data.domain,
+      formula: kpi.source_data.formula,
+    } : undefined,
   }));
 }
 

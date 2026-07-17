@@ -9,10 +9,16 @@ import {
   Download,
   MessageSquare,
   RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  Database,
+  Info,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { jsPDF } from "jspdf";
+import { useKpis } from "@/hooks/useKpis";
+import { translateOdooModel, translateOdooDomain } from "@/lib/utils";
 
 interface AISummaryModalProps {
   isOpen: boolean;
@@ -21,14 +27,20 @@ interface AISummaryModalProps {
 
 export function AISummaryModal({ isOpen, onClose }: AISummaryModalProps) {
   const router = useRouter();
+  const { data: kpis } = useKpis();
   const [summary, setSummary] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
+  const [showSources, setShowSources] = useState<boolean>(false);
+  const [expandedKpiIds, setExpandedKpiIds] = useState<{ [id: string]: boolean }>({});
   const modalRef = useRef<HTMLDivElement>(null);
+
 
   useEffect(() => {
     if (isOpen) {
+      setShowSources(false);
+      setExpandedKpiIds({});
       fetchSummary();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -367,9 +379,90 @@ export function AISummaryModal({ isOpen, onClose }: AISummaryModalProps) {
           )}
 
           {!isLoading && !error && summary && (
-            <div className="prose prose-slate max-w-none">
-              {parseMarkdownToReact(summary)}
-            </div>
+            <>
+              <div className="prose prose-slate max-w-none">
+                {parseMarkdownToReact(summary)}
+              </div>
+
+              {/* Collapsible Source Data Section */}
+              <div className="mt-8 pt-6 border-t border-slate-150">
+                <button
+                  onClick={() => setShowSources(!showSources)}
+                  className="w-full flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-slate-900 hover:border-slate-300 transition-all font-semibold text-xs sm:text-sm cursor-pointer shadow-2xs"
+                >
+                  <span className="flex items-center gap-2">
+                    <Database className="h-4 w-4 text-blue-600 animate-pulse" />
+                    <span>Explicabilité IA : Voir les données sources ({kpis?.length || 0} KPIs audités)</span>
+                  </span>
+                  {showSources ? (
+                    <ChevronUp className="h-4 w-4 text-slate-500" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-slate-500" />
+                  )}
+                </button>
+
+                {showSources && kpis && (
+                  <div className="mt-4 space-y-4 animate-slideDown">
+                    <p className="text-[11px] text-slate-500 font-medium leading-relaxed bg-emerald-50 text-emerald-950 p-3 rounded-lg border border-emerald-100">
+                      ℹ️ <strong>Rapport Audité :</strong> Les chiffres analysés par l'IA ci-dessus proviennent des requêtes directes configurées sur Odoo 17 et stockées en cache PostgreSQL.
+                    </p>
+                    <div className="grid grid-cols-1 gap-3">
+                      {kpis.map((kpi) => {
+                        const isTechExpanded = !!expandedKpiIds[kpi.id];
+                        return (
+                          <div key={kpi.id} className="border border-slate-200 rounded-xl p-3 bg-white hover:border-slate-350 transition-all">
+                            <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                              <span className="font-bold text-xs text-slate-800">{kpi.label}</span>
+                              <span className="font-mono text-xs font-bold text-blue-600">
+                                {new Intl.NumberFormat("fr-FR").format(kpi.value)} {kpi.unit || ""}
+                              </span>
+                            </div>
+                            {kpi.sourceData && (
+                              <div className="mt-2 text-[10px] sm:text-xs text-slate-600 space-y-2">
+                                <div className="flex gap-2">
+                                  <span className="font-bold text-slate-400 w-20 flex-shrink-0">Source :</span>
+                                  <span className="font-semibold text-slate-700">{translateOdooModel(kpi.sourceData.model)}</span>
+                                </div>
+                                <div className="flex gap-2">
+                                  <span className="font-bold text-slate-400 w-20 flex-shrink-0">Sélection :</span>
+                                  <div className="font-medium text-slate-700">
+                                    <ul className="list-disc pl-4 space-y-0.5">
+                                      {translateOdooDomain(kpi.sourceData.domain).map((f, i) => (
+                                        <li key={i}>{f}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                </div>
+                                <div className="flex gap-2 pb-1">
+                                  <span className="font-bold text-slate-400 w-20 flex-shrink-0">Règle :</span>
+                                  <span className="font-semibold text-slate-700">{kpi.sourceData.formula}</span>
+                                </div>
+                                
+                                <div className="border-t border-slate-100 pt-2">
+                                  <button
+                                    onClick={() => setExpandedKpiIds((prev) => ({ ...prev, [kpi.id]: !prev[kpi.id] }))}
+                                    className="flex items-center justify-between w-full text-[9px] sm:text-[10px] font-bold text-slate-450 hover:text-slate-600 transition-colors cursor-pointer"
+                                  >
+                                    <span>Requête technique Odoo</span>
+                                    {isTechExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                                  </button>
+                                  {isTechExpanded && (
+                                    <div className="mt-1.5 bg-slate-900 text-slate-200 p-2 rounded-lg font-mono text-[9px] sm:text-[10px] space-y-1 overflow-x-auto border border-slate-800 shadow-inner">
+                                      <div><span className="text-cyan-400">Modèle :</span> "{kpi.sourceData.model}"</div>
+                                      <div><span className="text-emerald-400">Filtre :</span> {kpi.sourceData.domain}</div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
 

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models.kpi_cache import KPICache, KPIHistoryCache, RevenueHistoryCache
-from app.schemas.kpi import KPI
+from app.schemas.kpi import KPI, KPISourceData
 from app.services.date_utils import previous_month_str
 
 _KPI_ORDER = [
@@ -17,6 +17,59 @@ _KPI_ORDER = [
     "stock_alerts", "new_leads", "conversion_rate",
     "pipeline_value", "stock_value", "active_customers", "late_orders",
 ]
+
+_KPI_SOURCE_META = {
+    "revenue": {
+        "model": "sale.order",
+        "domain": "[('state', 'in', ['sale', 'done']), ('date_order', '>=', début_du_mois)]",
+        "formula": "Somme de amount_total des commandes du mois en cours"
+    },
+    "new_orders": {
+        "model": "sale.order",
+        "domain": "[('date_order', '>=', début_du_mois)]",
+        "formula": "Nombre total de commandes passées ce mois-ci"
+    },
+    "avg_order_value": {
+        "model": "sale.order",
+        "domain": "Calculé à partir du Chiffre d'affaires et du Nombre de nouvelles commandes du mois",
+        "formula": "Chiffre d'affaires mensuel / Nombre de commandes mensuelles"
+    },
+    "stock_alerts": {
+        "model": "product.product",
+        "domain": "[('qty_available', '<', 5), ('type', '=', 'product')]",
+        "formula": "Nombre d'articles de type stockable dont la quantité en stock est inférieure à 5"
+    },
+    "new_leads": {
+        "model": "crm.lead",
+        "domain": "[('create_date', '>=', début_du_mois), ('type', '=', 'lead')]",
+        "formula": "Nombre total de pistes (leads) commerciales créées ce mois-ci"
+    },
+    "conversion_rate": {
+        "model": "crm.lead",
+        "domain": "[('create_date', '>=', début_du_mois), ('type', '=', 'opportunity')]",
+        "formula": "(Nombre d'opportunités gagnées ce mois-ci / Nombre total d'opportunités créées ce mois-ci) * 100"
+    },
+    "pipeline_value": {
+        "model": "crm.lead",
+        "domain": "[('type', '=', 'opportunity'), ('active', '=', True), ('stage_id.is_won', '=', False)]",
+        "formula": "Somme des revenus attendus (expected_revenue) de toutes les opportunités ouvertes"
+    },
+    "stock_value": {
+        "model": "product.product",
+        "domain": "[('type', '=', 'product')]",
+        "formula": "Somme de (quantité disponible * coût unitaire standard) pour tous les articles stockables"
+    },
+    "active_customers": {
+        "model": "sale.order",
+        "domain": "[('date_order', '>=', début_du_mois)]",
+        "formula": "Nombre de clients uniques (partner_id distincts) ayant passé au moins une commande ce mois-ci"
+    },
+    "late_orders": {
+        "model": "sale.order",
+        "domain": "[('state', 'in', ['sale', 'done']), ('commitment_date', '<', aujourd'hui)]",
+        "formula": "Nombre de commandes confirmées dont la date de livraison prévue (commitment_date) est dépassée"
+    }
+}
 
 
 def _compute_trend(current: float, previous: float | None):
@@ -52,6 +105,14 @@ def get_kpis() -> list[KPI]:
         result = []
         for r in ordered:
             trend, change_percent = _compute_trend(r.value, previous_values.get(r.id))
+            meta = _KPI_SOURCE_META.get(r.id)
+            source_data = None
+            if meta:
+                source_data = KPISourceData(
+                    model=meta["model"],
+                    domain=meta["domain"],
+                    formula=meta["formula"]
+                )
             result.append(KPI(
                 id=r.id,
                 label=r.label,
@@ -59,6 +120,7 @@ def get_kpis() -> list[KPI]:
                 unit=r.unit,
                 trend=trend,
                 change_percent=change_percent,
+                source_data=source_data
             ))
         return result
     finally:

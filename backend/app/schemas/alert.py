@@ -1,5 +1,18 @@
 from pydantic import BaseModel
-from typing import Literal
+from typing import Literal, Optional, List
+
+
+class AlertSourceData(BaseModel):
+    kpi_label: str
+    kpi_value: float
+    kpi_unit: Optional[str] = None
+    model: str
+    domain: str
+    formula: str
+    threshold_info: str
+    history_values: Optional[List[float]] = None
+    z_score: Optional[float] = None
+    mean: Optional[float] = None
 
 
 class Alert(BaseModel):
@@ -8,4 +21,6 @@ class Alert(BaseModel):
     severity: Literal["warning", "critical"]
     message: str
     is_anomaly: bool = False
+    source_data: Optional[AlertSourceData] = None
+
 

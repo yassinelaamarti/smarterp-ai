@@ -12,7 +12,7 @@ Deux types de règles :
 
 from typing import Optional
 from app.schemas.kpi import KPI
-from app.schemas.alert import Alert
+from app.schemas.alert import Alert, AlertSourceData
 
 RuleResult = Optional[tuple[str, str]]  # (severity, message)
 
@@ -73,26 +73,66 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
 
     alerts = []
     for kpi in kpis:
+        threshold_info = ""
         if kpi.id == "stock_alerts":
             result = _check_stock_alerts(kpi, settings)
+            critical = settings.get("stock_critical", 10.0)
+            warning = settings.get("stock_warning", 0.0)
+            threshold_info = f"Seuils configurés : Critique > {critical}, Avertissement > {warning}"
         elif kpi.id == "late_orders":
             result = _check_late_orders(kpi, settings)
+            critical = settings.get("late_orders_critical", 5.0)
+            warning = settings.get("late_orders_warning", 0.0)
+            threshold_info = f"Seuils configurés : Critique > {critical}, Avertissement > {warning}"
         elif kpi.id == "revenue":
-            result = _check_trend_drop(kpi, settings.get("revenue_critical", -15.0), settings.get("revenue_warning", -5.0), "Le chiffre d'affaires")
+            critical = settings.get("revenue_critical", -15.0)
+            warning = settings.get("revenue_warning", -5.0)
+            result = _check_trend_drop(kpi, critical, warning, "Le chiffre d'affaires")
+            threshold_info = f"Seuils de baisse configurés : Critique <= {critical}%, Avertissement <= {warning}%"
         elif kpi.id == "new_orders":
-            result = _check_trend_drop(kpi, settings.get("new_orders_critical", -30.0), settings.get("new_orders_warning", -20.0), "Le nombre de nouvelles commandes")
+            critical = settings.get("new_orders_critical", -30.0)
+            warning = settings.get("new_orders_warning", -20.0)
+            result = _check_trend_drop(kpi, critical, warning, "Le nombre de nouvelles commandes")
+            threshold_info = f"Seuils de baisse configurés : Critique <= {critical}%, Avertissement <= {warning}%"
         elif kpi.id == "conversion_rate":
-            result = _check_trend_drop(kpi, settings.get("conversion_rate_critical", -30.0), settings.get("conversion_rate_warning", -20.0), "Le taux de conversion")
+            critical = settings.get("conversion_rate_critical", -30.0)
+            warning = settings.get("conversion_rate_warning", -20.0)
+            result = _check_trend_drop(kpi, critical, warning, "Le taux de conversion")
+            threshold_info = f"Seuils de baisse configurés : Critique <= {critical}%, Avertissement <= {warning}%"
         elif kpi.id == "pipeline_value":
-            result = _check_trend_drop(kpi, settings.get("pipeline_value_critical", -40.0), settings.get("pipeline_value_warning", -30.0), "La valeur du pipeline CRM")
+            critical = settings.get("pipeline_value_critical", -40.0)
+            warning = settings.get("pipeline_value_warning", -30.0)
+            result = _check_trend_drop(kpi, critical, warning, "La valeur du pipeline CRM")
+            threshold_info = f"Seuils de baisse configurés : Critique <= {critical}%, Avertissement <= {warning}%"
         elif kpi.id == "active_customers":
-            result = _check_trend_drop(kpi, settings.get("active_customers_critical", -30.0), settings.get("active_customers_warning", -20.0), "Le nombre de clients actifs")
+            critical = settings.get("active_customers_critical", -30.0)
+            warning = settings.get("active_customers_warning", -20.0)
+            result = _check_trend_drop(kpi, critical, warning, "Le nombre de clients actifs")
+            threshold_info = f"Seuils de baisse configurés : Critique <= {critical}%, Avertissement <= {warning}%"
         else:
             continue
 
         if result:
             severity, message = result
-            alerts.append(Alert(id=kpi.id, kpi_id=kpi.id, severity=severity, message=message, is_anomaly=False))
+            source_data = None
+            if kpi.source_data:
+                source_data = AlertSourceData(
+                    kpi_label=kpi.label,
+                    kpi_value=kpi.value,
+                    kpi_unit=kpi.unit,
+                    model=kpi.source_data.model,
+                    domain=kpi.source_data.domain,
+                    formula=kpi.source_data.formula,
+                    threshold_info=threshold_info
+                )
+            alerts.append(Alert(
+                id=kpi.id,
+                kpi_id=kpi.id,
+                severity=severity,
+                message=message,
+                is_anomaly=False,
+                source_data=source_data
+            ))
 
     # Détection d'anomalies statistiques par l'IA
     if db is not None:
@@ -120,14 +160,32 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
                         severity = "critical" if abs(z_score) >= 2.2 else "warning"
                         direction = "Hausse" if z_score > 0 else "Baisse"
                         message = f"[Anomalie IA] {direction} anormale détectée pour {kpi.label.lower()} : la valeur actuelle ({kpi.value} {kpi.unit or ''}) s'écarte significativement de l'historique (Z-score: {z_score:+.2f}, moyenne: {mean:.1f})."
+                        
+                        source_data = None
+                        if kpi.source_data:
+                            source_data = AlertSourceData(
+                                kpi_label=kpi.label,
+                                kpi_value=kpi.value,
+                                kpi_unit=kpi.unit,
+                                model=kpi.source_data.model,
+                                domain=kpi.source_data.domain,
+                                formula=kpi.source_data.formula,
+                                threshold_info=f"Anomalie statistique détectée : Z-score absolu |{z_score:.2f}| >= 1.8. Écart significatif par rapport à la moyenne historique ({mean:.1f}).",
+                                history_values=history_values,
+                                z_score=z_score,
+                                mean=mean
+                            )
+                        
                         alerts.append(Alert(
                             id=f"anomaly_{kpi.id}",
                             kpi_id=kpi.id,
                             severity=severity,
                             message=message,
-                            is_anomaly=True
+                            is_anomaly=True,
+                            source_data=source_data
                         ))
 
     return alerts
+
 
 

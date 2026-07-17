@@ -1,3 +1,9 @@
+export interface KPISourceData {
+  model: string;
+  domain: string;
+  formula: string;
+}
+
 export interface KPI {
   id: string;
   label: string;
@@ -5,6 +11,7 @@ export interface KPI {
   unit?: string;
   trend?: "up" | "down" | "stable";
   changePercent?: number;
+  sourceData?: KPISourceData;
 }
 
 export interface ChatMessage {
@@ -12,4 +19,4 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
-}
+}
