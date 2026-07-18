@@ -13,6 +13,7 @@ class AlertSourceData(BaseModel):
     history_values: Optional[List[float]] = None
     z_score: Optional[float] = None
     mean: Optional[float] = None
+    root_causes: Optional[List[str]] = None
 
 
 class Alert(BaseModel):

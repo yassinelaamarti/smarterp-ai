@@ -15,6 +15,7 @@ interface SourceData {
   historyValues?: number[];
   zScore?: number;
   mean?: number;
+  rootCauses?: string[];
 }
 
 interface SourceDataModalProps {
@@ -159,6 +160,32 @@ export function SourceDataModal({ isOpen, onClose, title, data }: SourceDataModa
               </h4>
               <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-3 text-xs sm:text-sm text-slate-800 leading-relaxed font-semibold">
                 {data.thresholdInfo}
+              </div>
+            </div>
+          )}
+
+          {/* Root Cause Analysis (Décomposition par segment) */}
+          {data.rootCauses && data.rootCauses.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-100 pb-1">
+                <Activity className="h-4 w-4 text-rose-500" />
+                Décomposition des causes racine (RCA)
+              </h4>
+              <div className="bg-rose-50/40 border border-rose-100/70 rounded-xl p-3.5 space-y-2.5">
+                <p className="text-xs font-semibold text-slate-600">
+                  Top contributeurs identifiés à la variation de l&apos;indicateur :
+                </p>
+                <ul className="space-y-2">
+                  {data.rootCauses.map((cause, index) => {
+                    const isPositive = cause.includes("+") || (!cause.includes("-") && !cause.includes(" -"));
+                    return (
+                      <li key={index} className="flex items-center gap-2 text-xs sm:text-sm font-semibold">
+                        <span className={`inline-flex items-center justify-center h-2 w-2 rounded-full ${isPositive ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                        <span className="text-slate-700">{cause}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             </div>
           )}

@@ -161,3 +161,78 @@ class TestRecommendations(unittest.TestCase):
         self.assertEqual(added_rec.action_type, "restock_order")
         self.assertEqual(added_rec.action_payload, {"product_id": 1, "quantity": 50})
         self.assertEqual(added_rec.estimated_impact, "+10 000 MAD")
+
+    @patch("app.services.root_cause_analysis.odoo")
+    def test_rca_real_revenue_success(self, mock_odoo):
+        from app.services.root_cause_analysis import get_root_cause_analysis
+        
+        # Simuler 2 commandes courantes
+        mock_odoo.search_read.side_effect = [
+            # sale.order courantes
+            [
+                {"id": 1, "amount_total": 1000.0, "partner_id": [10, "Client A"], "user_id": [2, "Commercial X"]},
+                {"id": 2, "amount_total": 2000.0, "partner_id": [11, "Client B"], "user_id": [3, "Commercial Y"]}
+            ],
+            # sale.order précédentes
+            [
+                {"id": 3, "amount_total": 5000.0, "partner_id": [10, "Client A"], "user_id": [2, "Commercial X"]}
+            ],
+            # res.partner
+            [
+                {"id": 10, "state_id": [5, "Casablanca"]},
+                {"id": 11, "state_id": [6, "Rabat"]}
+            ],
+            # sale.order.line courantes
+            [
+                {"product_id": [100, "Desk"], "price_subtotal": 1000.0},
+                {"product_id": [101, "Chair"], "price_subtotal": 2000.0}
+            ],
+            # sale.order.line précédentes
+            [
+                {"product_id": [100, "Desk"], "price_subtotal": 5000.0}
+            ]
+        ]
+        
+        res = get_root_cause_analysis("revenue", 3000.0, -40.0)
+        self.assertTrue(len(res) > 0)
+        # Vérifier que les dimensions contiennent Produit, Commercial, Région
+        dimensions = {r["dimension"] for r in res}
+        self.assertTrue("Produit" in dimensions or "Commercial" in dimensions or "Région" in dimensions)
+
+    @patch("app.services.root_cause_analysis.odoo")
+    def test_rca_simulated_fallback_on_exception(self, mock_odoo):
+        from app.services.root_cause_analysis import get_root_cause_analysis
+        # Simuler une panne Odoo XML-RPC
+        mock_odoo.search_read.side_effect = Exception("Odoo XML-RPC error")
+
+        res = get_root_cause_analysis("revenue", 10000.0, -10.0)
+        # Devrait retourner les données simulées
+        self.assertEqual(len(res), 3)
+        self.assertEqual(res[0]["dimension"], "Région")
+        self.assertEqual(res[0]["segment"], "Casablanca-Settat")
+        self.assertEqual(res[0]["delta"], -5.5)
+
+    def test_alert_engine_rca_integration(self):
+        from app.services.alert_engine import evaluate_alerts
+        from app.schemas.kpi import KPI, KPISourceData
+        
+        kpis = [
+            KPI(
+                id="revenue",
+                label="CA",
+                value=8000.0,
+                unit="MAD",
+                trend="down",
+                change_percent=-20.0,
+                source_data=KPISourceData(model="sale.order", domain="[]", formula="")
+            )
+        ]
+        
+        alerts = evaluate_alerts(kpis)
+        self.assertEqual(len(alerts), 1)
+        alert = alerts[0]
+        # Le message doit contenir le texte formaté des causes racine
+        self.assertIn("dont ", alert.message)
+        self.assertIsNotNone(alert.source_data.root_causes)
+        self.assertTrue(len(alert.source_data.root_causes) > 0)
+

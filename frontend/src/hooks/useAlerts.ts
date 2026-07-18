@@ -12,6 +12,7 @@ export interface AlertSourceData {
   historyValues?: number[];
   zScore?: number;
   mean?: number;
+  rootCauses?: string[];
 }
 
 export interface Alert {
@@ -40,6 +41,7 @@ interface AlertApiResponse {
     history_values?: number[];
     z_score?: number;
     mean?: number;
+    root_causes?: string[];
   };
 }
 
@@ -62,6 +64,7 @@ async function fetchAlerts(): Promise<Alert[]> {
       historyValues: a.source_data.history_values,
       zScore: a.source_data.z_score,
       mean: a.source_data.mean,
+      rootCauses: a.source_data.root_causes,
     } : undefined,
   }));
 }
