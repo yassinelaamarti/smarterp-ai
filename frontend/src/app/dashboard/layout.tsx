@@ -42,6 +42,7 @@ export default function DashboardLayout({
   const navigation = [
     { name: "Tableau de Bord", href: "/dashboard", icon: LayoutDashboard },
     { name: "Agent IA Chat", href: "/dashboard/chat", icon: MessageSquare },
+    { name: "Audit Actions IA", href: "/dashboard/audit", icon: ShieldCheck },
     { name: "Configuration", href: "/dashboard/settings", icon: Settings, disabled: false },
   ];
 

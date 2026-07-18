@@ -6,6 +6,7 @@ import { RevenueChart } from "@/components/dashboard/RevenueChart";
 import { AlertBanner } from "@/components/dashboard/AlertBanner";
 import { AISummaryModal } from "@/components/dashboard/AISummaryModal";
 import { HealthScoreCard } from "@/components/dashboard/HealthScoreCard";
+import { RecommendationsList } from "@/components/dashboard/RecommendationsList";
 import { Sparkles } from "lucide-react";
 
 export default function DashboardPage() {
@@ -36,8 +37,9 @@ export default function DashboardPage() {
         <HealthScoreCard />
       </div>
 
-      <div className="mt-6">
+      <div className="mt-6 space-y-6">
         <AlertBanner />
+        <RecommendationsList />
         <KPIGrid />
       </div>
 

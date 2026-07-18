@@ -58,6 +58,26 @@ def sync_all() -> None:
         kpis = sync_kpis(db)
         sync_kpi_history(db, kpis)
         sync_revenue_history(db)
+        
+        # Générer et actualiser les recommandations IA actionnables en fonction des alertes
+        try:
+            from app.services.kpi_calculator import get_kpis as get_kpis_from_calculator
+            from app.services.alert_engine import evaluate_alerts
+            from app.services.recommendation_generator import generate_recommendations
+            from app.models.alert_setting import AlertSetting
+            
+            settings_db = db.query(AlertSetting).all()
+            settings_dict = {s.key: s.value for s in settings_db}
+            
+            fresh_kpis = get_kpis_from_calculator()
+            alerts = evaluate_alerts(fresh_kpis, settings_dict, db=db)
+            
+            if alerts:
+                logger.info(f"Génération automatique de recommandations pour {len(alerts)} alertes/anomalies...")
+                generate_recommendations(db, alerts)
+        except Exception as e:
+            logger.error(f"Échec de la génération automatique des recommandations : {e}")
+
         logger.info("Synchronisation terminée avec succès.")
     except Exception:
         logger.exception("Échec de la synchronisation Odoo -> cache (le cache existant est conservé)")
