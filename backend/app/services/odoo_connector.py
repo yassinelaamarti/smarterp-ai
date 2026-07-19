@@ -56,6 +56,18 @@ class OdooConnector:
             [domain],
         )
 
+    def create(self, model: str, vals: dict) -> int:
+        """
+        Crée un nouvel enregistrement dans Odoo.
+        Exemple : create("purchase.order", {"partner_id": 1, "state": "draft"})
+        """
+        uid = self._get_uid()
+        return self._models().execute_kw(
+            self.db, uid, self.password,
+            model, "create",
+            [vals],
+        )
+
 
 # Instance unique réutilisée par tout le backend
 odoo = OdooConnector()

@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
 export interface AIRecommendation {
-  id: number;
+  id: string;
   tenantId?: string;
   sourceType: "anomaly" | "health_score" | "kpi_alert";
   sourceId: string;
@@ -10,28 +10,38 @@ export interface AIRecommendation {
   explanation: string;
   actionType: "restock_order" | "send_email_campaign" | "create_crm_activity" | "none";
   actionPayload?: Record<string, any>;
-  estimatedImpact?: string;
-  status: "pending" | "executed" | "dismissed";
+  estimatedImpact?: {
+    label: string;
+    confidence: "low" | "medium" | "high";
+  };
+  status: "pending" | "executed" | "dismissed" | "failed";
   executedBy?: number;
   executedAt?: string;
   createdAt: string;
+  expiresAt?: string;
 }
 
 export interface AIRecommendationAudit {
-  id: number;
+  id: string;
+  recommendationId: string;
   sourceType: string;
   title: string;
   actionType: string;
   actionPayload?: Record<string, any>;
-  estimatedImpact?: string;
+  estimatedImpact?: {
+    label: string;
+    confidence: "low" | "medium" | "high";
+  };
   status: string;
   executedByName?: string;
   executedAt?: string;
   createdAt: string;
+  success?: boolean;
+  errorMessage?: string;
 }
 
 interface RecommendationApiResponse {
-  id: number;
+  id: string;
   tenant_id?: string;
   source_type: "anomaly" | "health_score" | "kpi_alert";
   source_id: string;
@@ -39,24 +49,34 @@ interface RecommendationApiResponse {
   explanation: string;
   action_type: "restock_order" | "send_email_campaign" | "create_crm_activity" | "none";
   action_payload?: Record<string, any>;
-  estimated_impact?: string;
-  status: "pending" | "executed" | "dismissed";
+  estimated_impact?: {
+    label: string;
+    confidence: "low" | "medium" | "high";
+  };
+  status: "pending" | "executed" | "dismissed" | "failed";
   executed_by?: number;
   executed_at?: string;
   created_at: string;
+  expires_at?: string;
 }
 
 interface AuditApiResponse {
-  id: number;
+  id: string;
+  recommendation_id: string;
   source_type: string;
   title: string;
   action_type: string;
   action_payload?: Record<string, any>;
-  estimated_impact?: string;
+  estimated_impact?: {
+    label: string;
+    confidence: "low" | "medium" | "high";
+  };
   status: string;
   executed_by_name?: string;
   executed_at?: string;
   created_at: string;
+  success?: boolean;
+  error_message?: string;
 }
 
 async function fetchRecommendations(): Promise<AIRecommendation[]> {
@@ -75,6 +95,7 @@ async function fetchRecommendations(): Promise<AIRecommendation[]> {
     executedBy: r.executed_by,
     executedAt: r.executed_at,
     createdAt: r.created_at,
+    expiresAt: r.expires_at,
   }));
 }
 
@@ -82,6 +103,7 @@ async function fetchAudit(): Promise<AIRecommendationAudit[]> {
   const { data } = await api.get<AuditApiResponse[]>("/api/recommendations/audit");
   return data.map((r) => ({
     id: r.id,
+    recommendationId: r.recommendation_id,
     sourceType: r.source_type,
     title: r.title,
     actionType: r.action_type,
@@ -91,15 +113,17 @@ async function fetchAudit(): Promise<AIRecommendationAudit[]> {
     executedByName: r.executed_by_name,
     executedAt: r.executed_at,
     createdAt: r.created_at,
+    success: r.success,
+    errorMessage: r.error_message,
   }));
 }
 
-async function executeRecommendation(id: number): Promise<any> {
+async function executeRecommendation(id: string): Promise<any> {
   const { data } = await api.post(`/api/recommendations/${id}/execute`);
   return data;
 }
 
-async function dismissRecommendation(id: number): Promise<any> {
+async function dismissRecommendation(id: string): Promise<any> {
   const { data } = await api.post(`/api/recommendations/${id}/dismiss`);
   return data;
 }

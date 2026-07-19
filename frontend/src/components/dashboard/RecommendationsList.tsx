@@ -23,17 +23,17 @@ export function RecommendationsList() {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // ID de la recommandation en cours d'exécution pour le spinner individuel
-  const [executingId, setExecutingId] = useState<number | null>(null);
-  const [dismissingId, setDismissingId] = useState<number | null>(null);
+  const [executingId, setExecutingId] = useState<string | null>(null);
+  const [dismissingId, setDismissingId] = useState<string | null>(null);
 
-  const handleExecute = (id: number) => {
+  const handleExecute = (id: string) => {
     setExecutingId(id);
     execute(id, {
       onSettled: () => setExecutingId(null),
     });
   };
 
-  const handleDismiss = (id: number) => {
+  const handleDismiss = (id: string) => {
     setDismissingId(id);
     dismiss(id, {
       onSettled: () => setDismissingId(null),
@@ -120,9 +120,15 @@ export function RecommendationsList() {
                   </span>
                   
                   {rec.estimatedImpact && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-100 px-2.5 py-1 text-2xs font-bold text-emerald-700">
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-2xs font-bold ${
+                      (typeof rec.estimatedImpact === "object" && rec.estimatedImpact.confidence === "high")
+                        ? "bg-emerald-50 border border-emerald-100 text-emerald-700"
+                        : (typeof rec.estimatedImpact === "object" && rec.estimatedImpact.confidence === "low")
+                        ? "bg-amber-50 border border-amber-100 text-amber-700"
+                        : "bg-blue-50 border border-blue-100 text-blue-700"
+                    }`}>
                       <TrendingUp className="h-3 w-3" />
-                      {rec.estimatedImpact}
+                      {typeof rec.estimatedImpact === "string" ? rec.estimatedImpact : rec.estimatedImpact.label}
                     </span>
                   )}
                 </div>

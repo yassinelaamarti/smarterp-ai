@@ -65,7 +65,8 @@ class TestRecommendations(unittest.TestCase):
         mock_odoo.search_count.return_value = 1
         mock_odoo.search_read.return_value = [{"id": 12, "name": "Desk Organizer"}]
         
-        # Mock de execute_kw pour message_post
+        # Mock de create et execute_kw
+        mock_odoo.create.return_value = 1001
         mock_odoo._models().execute_kw.return_value = 1001
 
         res = OdooActionService.execute_action(
@@ -83,6 +84,10 @@ class TestRecommendations(unittest.TestCase):
     def test_execute_action_send_email_campaign_success(self, mock_odoo):
         # Simuler que tous les partenaires existent (2 partenaires)
         mock_odoo.search_count.return_value = 2
+        mock_odoo.search_read.return_value = [
+            {"id": 10, "name": "Partenaire 10", "email": "p10@example.com"},
+            {"id": 11, "name": "Partenaire 11", "email": "p11@example.com"}
+        ]
         mock_odoo._models().execute_kw.return_value = 2001
 
         res = OdooActionService.execute_action(
@@ -100,6 +105,7 @@ class TestRecommendations(unittest.TestCase):
     def test_execute_action_create_crm_activity_success(self, mock_odoo):
         # Simuler que le lead existe
         mock_odoo.search_count.return_value = 1
+        mock_odoo.create.return_value = 3001
         mock_odoo._models().execute_kw.return_value = 3001
 
         res = OdooActionService.execute_action(
@@ -160,7 +166,7 @@ class TestRecommendations(unittest.TestCase):
         self.assertEqual(added_rec.title, "Reapprovisionner Customizable Desk")
         self.assertEqual(added_rec.action_type, "restock_order")
         self.assertEqual(added_rec.action_payload, {"product_id": 1, "quantity": 50})
-        self.assertEqual(added_rec.estimated_impact, "+10 000 MAD")
+        self.assertEqual(added_rec.estimated_impact, {"label": "+10 000 MAD", "confidence": "medium"})
 
     @patch("app.services.root_cause_analysis.odoo")
     def test_rca_real_revenue_success(self, mock_odoo):

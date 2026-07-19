@@ -1,23 +1,64 @@
+import uuid
+import enum
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, JSON, DateTime, ForeignKey
+from sqlalchemy import Column, String, JSON, DateTime, ForeignKey, Text, Boolean, Enum, UUID, Integer
 from app.database import Base
+
+
+class RecommendationSource(str, enum.Enum):
+    anomaly = "anomaly"
+    health_score = "health_score"
+    kpi_alert = "kpi_alert"
+
+
+class RecommendationAction(str, enum.Enum):
+    restock_order = "restock_order"
+    send_email_campaign = "send_email_campaign"
+    create_crm_activity = "create_crm_activity"
+    none = "none"
+
+
+class RecommendationStatus(str, enum.Enum):
+    pending = "pending"
+    executed = "executed"
+    dismissed = "dismissed"
+    failed = "failed"
 
 
 class AIRecommendation(Base):
     """Représente une recommandation IA actionnable par l'utilisateur."""
 
-    __tablename__ = "ai_recommendations"
+    __tablename__ = "ai_recommendation"
 
-    id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(String, nullable=True)
-    source_type = Column(String, nullable=False)  # anomaly | health_score | kpi_alert
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
+    source_type = Column(Enum(RecommendationSource), nullable=False)
     source_id = Column(String, nullable=False)  # ex: "stock_alerts" ou "anomaly_revenue"
     title = Column(String, nullable=False)
     explanation = Column(String, nullable=False)
-    action_type = Column(String, nullable=False)  # restock_order | send_email_campaign | create_crm_activity | none
-    action_payload = Column(JSON, nullable=True)  # ex: {"product_id": 36, "quantity": 50}
-    estimated_impact = Column(String, nullable=True)  # ex: "+12 000 MAD potentiels"
-    status = Column(String, default="pending", nullable=False)  # pending | executed | dismissed
+    action_type = Column(Enum(RecommendationAction), nullable=False, default=RecommendationAction.none)
+    action_payload = Column(JSON, nullable=False, default=dict)  # ex: {"product_id": 36, "quantity": 50}
+    estimated_impact = Column(JSON, nullable=True)  # ex: {"label": "+12 000 DH", "confidence": "medium"}
+    status = Column(Enum(RecommendationStatus), default=RecommendationStatus.pending, nullable=False)
     executed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    executed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    executed_at = Column(DateTime(timezone=True), nullable=True)
+    failure_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AIActionLog(Base):
+    """Table d'audit pour tracer l'exécution ou le rejet des recommandations IA."""
+
+    __tablename__ = "ai_action_log"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recommendation_id = Column(UUID(as_uuid=True), nullable=False)  # clé de recommandation
+    tenant_id = Column(UUID(as_uuid=True), nullable=False)
+    action_type = Column(Enum(RecommendationAction), nullable=False)
+    action_payload = Column(JSON, nullable=False, default=dict)
+    odoo_result = Column(JSON, nullable=True)  # réponse brute de l'ERP Odoo
+    executed_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    executed_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    success = Column(Boolean, nullable=False)
+    error_message = Column(Text, nullable=True)

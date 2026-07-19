@@ -10,9 +10,10 @@ from app.database import engine, Base, SessionLocal
 from app.routers import kpis, chat, auth, alerts, settings, conversations, health_score, recommendations
 from app.services.kpi_sync import sync_all
 from app.models.user import User
+from app.models.tenant import Tenant
 from app.models.alert_setting import AlertSetting
 from app.models.kpi_cache import KPIHistoryCache
-from app.models.ai_recommendation import AIRecommendation
+from app.models.ai_recommendation import AIRecommendation, AIActionLog
 from app.services.auth import get_password_hash
 
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +30,18 @@ async def _sync_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Nettoyage de l'ancienne table ai_recommendations (pluriel) si elle existe
+    db_init = SessionLocal()
+    try:
+        from sqlalchemy import text
+        db_init.execute(text("DROP TABLE IF EXISTS ai_recommendations CASCADE"))
+        db_init.commit()
+        logger.info("Ancienne table ai_recommendations nettoyée.")
+    except Exception as e:
+        logger.error(f"Erreur lors du nettoyage de l'ancienne table ai_recommendations: {e}")
+    finally:
+        db_init.close()
+
     Base.metadata.create_all(bind=engine)
     
     # Auto-migration des colonnes pour les rapports programmés
@@ -51,8 +64,23 @@ async def lifespan(app: FastAPI):
     finally:
         db_mig.close()
     
-    # Seeder l'utilisateur admin par défaut s'il n'y a pas d'utilisateurs
+    # Seeder le tenant et l'utilisateur admin par défaut s'il n'y a pas d'utilisateurs
     db = SessionLocal()
+    try:
+        # Seeder le tenant par défaut
+        import uuid
+        DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
+        tenant_exists = db.query(Tenant).filter(Tenant.id == DEFAULT_TENANT_ID).first()
+        if not tenant_exists:
+            default_tenant = Tenant(
+                id=DEFAULT_TENANT_ID,
+                name="Tenant Principal PME"
+            )
+            db.add(default_tenant)
+            db.commit()
+            logger.info("Tenant principal par défaut créé.")
+    except Exception as e:
+        logger.error(f"Erreur lors du seeding du tenant par défaut: {e}")
     try:
         user_exists = db.query(User).first()
         if not user_exists:

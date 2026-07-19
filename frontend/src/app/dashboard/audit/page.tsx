@@ -17,8 +17,8 @@ import {
 export default function AuditPage() {
   const { data: auditLogs, isLoading, error } = useRecommendationsAudit();
 
-  const getStatusBadge = (status: string) => {
-    if (status === "executed") {
+  const getStatusBadge = (status: string, success?: boolean) => {
+    if (status === "executed" || (status === "pending" && success === true)) {
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-xs font-bold text-emerald-700">
           <CheckCircle className="h-3 w-3" />
@@ -26,8 +26,16 @@ export default function AuditPage() {
         </span>
       );
     }
+    if (status === "failed" || success === false) {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-red-50 border border-red-200 px-2 py-0.5 text-xs font-bold text-red-700">
+          <XCircle className="h-3 w-3" />
+          Échouée
+        </span>
+      );
+    }
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-red-50 border border-red-200 px-2 py-0.5 text-xs font-bold text-red-700">
+      <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 border border-slate-200 px-2 py-0.5 text-xs font-bold text-slate-700">
         <XCircle className="h-3 w-3" />
         Ignorée
       </span>
@@ -146,10 +154,15 @@ export default function AuditPage() {
                         {log.estimatedImpact && (
                           <span className="flex items-center gap-0.5 ml-2 font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-100">
                             <TrendingUp className="h-2.5 w-2.5" />
-                            {log.estimatedImpact}
+                            {typeof log.estimatedImpact === "string" ? log.estimatedImpact : log.estimatedImpact.label}
                           </span>
                         )}
                       </div>
+                      {log.errorMessage && (
+                        <div className="mt-2 text-[10px] text-red-700 bg-red-550/10 border border-red-100/50 p-1.5 rounded-lg font-mono leading-normal">
+                          <span className="font-bold text-red-800">Erreur :</span> {log.errorMessage}
+                        </div>
+                      )}
                     </td>
 
                     {/* Action Type */}
@@ -159,7 +172,7 @@ export default function AuditPage() {
 
                     {/* Status */}
                     <td className="py-4 px-5 whitespace-nowrap">
-                      {getStatusBadge(log.status)}
+                      {getStatusBadge(log.status, log.success)}
                     </td>
 
                     {/* Operator */}

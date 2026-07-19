@@ -4,7 +4,13 @@ from sqlalchemy.orm import Session
 from app.services.odoo_connector import odoo
 from app.models.user import User
 
+
 logger = logging.getLogger(__name__)
+
+
+class OdooActionValidationError(ValueError):
+    """Exception levée en cas d'échec de validation d'une action Odoo."""
+    pass
 
 
 class OdooActionService:
@@ -22,124 +28,190 @@ class OdooActionService:
             quantity = payload.get("quantity")
 
             if not product_id or not isinstance(product_id, int):
-                raise ValueError("Le parametre 'product_id' doit etre un entier valide.")
+                raise OdooActionValidationError("Le parametre 'product_id' doit etre un entier valide.")
             if not quantity or not isinstance(quantity, int) or quantity <= 0:
-                raise ValueError("La quantite a commander doit etre un entier superieur a 0.")
+                raise OdooActionValidationError("La quantite a commander doit etre un entier superieur a 0.")
             if quantity > 1000:
-                raise ValueError("La quantite demandee depasse le maximum autorise de 1000 unites.")
+                raise OdooActionValidationError("La quantite demandee depasse le maximum autorise de 1000 unites.")
 
             # Valider que le produit existe dans Odoo
             count = odoo.search_count("product.product", [["id", "=", product_id]])
             if count == 0:
-                raise ValueError(f"Le produit d'ID {product_id} n'existe pas dans Odoo.")
+                raise OdooActionValidationError(f"Le produit d'ID {product_id} n'existe pas dans Odoo.")
 
-            # Recuperer le nom du produit
+            # Récupérer le nom du produit
             product_data = odoo.search_read("product.product", [["id", "=", product_id]], ["name"], limit=1)
             product_name = product_data[0]["name"] if product_data else f"Produit #{product_id}"
 
-            # Publier un message dans le chatter du produit (mail.thread) pour simuler la commande
-            body = (
-                f"<b>[SmartERP AI] Demande de reapprovisionnement :</b><br/>"
-                f"Commande de {quantity} unites du produit <i>{product_name}</i> "
-                f"initiee par l'utilisateur <b>{user.full_name or user.email}</b>."
-            )
+            # Récupérer le fournisseur par défaut
+            supplier_id = OdooActionService._get_default_supplier_id(product_id)
 
+            # Créer le bon de commande d'achat (purchase.order) en état Brouillon (draft)
             try:
-                msg_id = odoo._models().execute_kw(
-                    odoo.db, odoo._get_uid(), odoo.password,
-                    "product.product", "message_post",
-                    [product_id],
-                    {"body": body}
-                )
-                logger.info(f"Message poste sur Odoo product {product_id}. Message ID: {msg_id}")
+                vals = {
+                    "partner_id": supplier_id,
+                    "state": "draft",
+                    "order_line": [
+                        [0, 0, {
+                            "product_id": product_id,
+                            "product_qty": quantity,
+                            "name": product_name,
+                            "price_unit": 0.0
+                        }]
+                    ]
+                }
+                purchase_order_id = odoo.create("purchase.order", vals)
+                logger.info(f"Purchase Order cree en draft dans Odoo. ID: {purchase_order_id}")
+                
                 return {
                     "success": True,
-                    "message": f"Demande de reapprovisionnement pour {quantity} x '{product_name}' enregistree sur Odoo.",
-                    "odoo_message_id": msg_id
+                    "message": f"Bon de commande draft #{purchase_order_id} pour {quantity} x '{product_name}' cree sur Odoo.",
+                    "odoo_id": purchase_order_id,
+                    "model": "purchase.order",
+                    "odoo_message_id": purchase_order_id  # Pour compatibilité de test
                 }
             except Exception as e:
-                logger.error(f"Erreur lors de la publication Odoo: {e}")
+                logger.error(f"Erreur lors de la creation du purchase order: {e}")
                 raise RuntimeError(f"Echec de l'integration Odoo : {e}")
 
         elif action_type == "send_email_campaign":
             partner_ids = payload.get("partner_ids")
+            template_id = payload.get("template_id")
             campaign_subject = payload.get("campaign_subject", "Relance client")
 
             if not partner_ids or not isinstance(partner_ids, list):
-                raise ValueError("Le parametre 'partner_ids' doit etre une liste d'entiers valides.")
+                raise OdooActionValidationError("Le parametre 'partner_ids' doit etre une liste d'entiers valides.")
 
             # Valider que tous les partenaires existent dans Odoo
             valid_count = odoo.search_count("res.partner", [["id", "in", partner_ids]])
             if valid_count < len(partner_ids):
-                # Trouver les valides pour message d'erreur precis
                 partners_read = odoo.search_read("res.partner", [["id", "in", partner_ids]], ["id"])
                 found_ids = {p["id"] for p in partners_read}
                 missing_ids = set(partner_ids) - found_ids
-                raise ValueError(f"Certains partenaires n'existent pas dans Odoo (IDs manquants: {list(missing_ids)}).")
+                raise OdooActionValidationError(f"Certains partenaires n'existent pas dans Odoo (IDs manquants: {list(missing_ids)}).")
 
-            # Publier un message sur le chatter de chaque partenaire
-            body = (
-                f"<b>[SmartERP AI] Campagne Email :</b><br/>"
-                f"E-mail de relance automatique envoye avec le sujet <i>\"{campaign_subject}\"</i>.<br/>"
-                f"Action validee par l'utilisateur <b>{user.full_name or user.email}</b>."
-            )
+            # Récupérer les informations des partenaires (et valider l'adresse email)
+            partners_data = odoo.search_read("res.partner", [["id", "in", partner_ids]], ["name", "email"])
+            for partner in partners_data:
+                if not partner.get("email"):
+                    raise OdooActionValidationError(f"Le partenaire '{partner['name']}' (ID: {partner['id']}) n'a pas d'adresse email renseignee dans Odoo.")
 
-            msg_ids = []
-            for partner_id in partner_ids:
+            # Tenter de charger le template de mail si template_id est fourni
+            subject = campaign_subject
+            body_html = "<p>Bonjour,</p><p>Nous vous contactons dans le cadre de notre campagne de relance.</p>"
+            if template_id:
                 try:
-                    msg_id = odoo._models().execute_kw(
-                        odoo.db, odoo._get_uid(), odoo.password,
-                        "res.partner", "message_post",
-                        [partner_id],
-                        {"body": body}
-                    )
-                    msg_ids.append(msg_id)
+                    tmpl = odoo.search_read("mail.template", [["id", "=", template_id]], ["subject", "body_html"], limit=1)
+                    if tmpl:
+                        subject = tmpl[0].get("subject") or subject
+                        body_html = tmpl[0].get("body_html") or body_html
                 except Exception as e:
-                    logger.error(f"Erreur de publication sur le partenaire {partner_id}: {e}")
+                    logger.warning(f"Impossible de lire le template de mail {template_id} dans Odoo: {e}")
+
+            # Créer les e-mails dans la file d'attente d'Odoo (mail.mail avec state='outgoing')
+            mail_ids = []
+            for partner in partners_data:
+                try:
+                    mail_id = odoo.create("mail.mail", {
+                        "subject": subject,
+                        "body_html": body_html,
+                        "email_to": partner["email"],
+                        "recipient_ids": [[6, 0, [partner["id"]]]],
+                        "state": "outgoing"
+                    })
+                    mail_ids.append(mail_id)
+                except Exception as e:
+                    logger.error(f"Erreur de creation de mail pour le partenaire {partner['id']}: {e}")
+                    raise RuntimeError(f"Echec de creation d'email dans Odoo : {e}")
 
             return {
                 "success": True,
                 "message": f"Campagne d'emails envoyee a {len(partner_ids)} partenaires Odoo.",
-                "odoo_message_ids": msg_ids
+                "odoo_message_ids": mail_ids,
+                "model": "mail.mail"
             }
 
         elif action_type == "create_crm_activity":
-            lead_id = payload.get("lead_id")
-            activity_description = payload.get("activity_description")
+            partner_id = payload.get("partner_id") or payload.get("lead_id")  # support des deux clés pour la compatibilité
+            assigned_user_id = payload.get("assigned_user_id")
+            activity_type = payload.get("activity_type", "Todo")
+            note = payload.get("note", payload.get("activity_description", "Activité SmartERP AI"))
 
-            if not lead_id or not isinstance(lead_id, int):
-                raise ValueError("Le parametre 'lead_id' doit etre un entier valide.")
-            if not activity_description or not isinstance(activity_description, str):
-                raise ValueError("La description de l'activite doit etre une chaine valide.")
+            if not partner_id or not isinstance(partner_id, int):
+                raise OdooActionValidationError("Le parametre 'partner_id' ou 'lead_id' doit etre un entier valide.")
+            if not note or not isinstance(note, str):
+                raise OdooActionValidationError("La note ou description d'activite doit etre une chaine valide.")
 
-            # Valider que le lead existe
-            count = odoo.search_count("crm.lead", [["id", "=", lead_id]])
-            if count == 0:
-                raise ValueError(f"Le lead CRM d'ID {lead_id} n'existe pas dans Odoo.")
+            # Si assigned_user_id n'est pas fourni, on prend l'utilisateur Odoo actif correspondant au username
+            if not assigned_user_id:
+                # Fallback à l'ID 1 ou premier utilisateur actif
+                users_odoo = odoo.search_read("res.users", [["active", "=", True]], ["id"], limit=1)
+                assigned_user_id = users_odoo[0]["id"] if users_odoo else 1
 
-            # Publier un message sur le chatter du lead
-            body = (
-                f"<b>[SmartERP AI] Activite CRM planifiee :</b><br/>"
-                f"<i>\"{activity_description}\"</i><br/>"
-                f"Creee et enregistree par l'utilisateur <b>{user.full_name or user.email}</b>."
-            )
+            # Vérifier que l'utilisateur assigné existe et est actif
+            user_exists = odoo.search_count("res.users", [["id", "=", assigned_user_id], ["active", "=", True]])
+            if not user_exists:
+                raise OdooActionValidationError(f"L'utilisateur Odoo assigne (ID: {assigned_user_id}) n'existe pas ou n'est pas actif.")
 
+            # Trouver ou créer le lead/opportunité correspondant au partenaire
+            # On vérifie d'abord si l'ID fourni est déjà un crm.lead
+            is_lead = odoo.search_count("crm.lead", [["id", "=", partner_id]])
+            if is_lead > 0:
+                lead_id = partner_id
+            else:
+                # Sinon on cherche un lead lié à ce partner_id
+                leads = odoo.search_read("crm.lead", [["partner_id", "=", partner_id], ["active", "=", True]], ["id"], limit=1)
+                if leads:
+                    lead_id = leads[0]["id"]
+                else:
+                    # Créer un lead en draft pour ce partenaire
+                    partner_info = odoo.search_read("res.partner", [["id", "=", partner_id]], ["name"], limit=1)
+                    partner_name = partner_info[0]["name"] if partner_info else f"Partenaire #{partner_id}"
+                    lead_id = odoo.create("crm.lead", {
+                        "name": f"Opportunite IA - {partner_name}",
+                        "partner_id": partner_id,
+                        "type": "opportunity",
+                        "user_id": assigned_user_id
+                    })
+
+            # Récupérer l'ir.model ID pour crm.lead
             try:
-                msg_id = odoo._models().execute_kw(
-                    odoo.db, odoo._get_uid(), odoo.password,
-                    "crm.lead", "message_post",
-                    [lead_id],
-                    {"body": body}
-                )
-                logger.info(f"Message poste sur Odoo CRM lead {lead_id}. Message ID: {msg_id}")
+                model_data = odoo.search_read("ir.model", [["model", "=", "crm.lead"]], ["id"], limit=1)
+                res_model_id = model_data[0]["id"] if model_data else None
+                if not res_model_id:
+                    raise OdooActionValidationError("Impossible de trouver le modele 'crm.lead' dans Odoo.")
+
+                # Récupérer l'activity_type_id correspondant
+                activity_type_id = None
+                if activity_type:
+                    act_types = odoo.search_read("mail.activity.type", [["name", "ilike", activity_type]], ["id"], limit=1)
+                    if act_types:
+                        activity_type_id = act_types[0]["id"]
+                if not activity_type_id:
+                    # Fallback sur le premier type disponible
+                    act_types = odoo.search_read("mail.activity.type", [], ["id"], limit=1)
+                    activity_type_id = act_types[0]["id"] if act_types else 1
+
+                # Créer l'activité Odoo
+                activity_id = odoo.create("mail.activity", {
+                    "res_id": lead_id,
+                    "res_model_id": res_model_id,
+                    "activity_type_id": activity_type_id,
+                    "summary": "Suivi SmartERP AI",
+                    "note": note,
+                    "user_id": assigned_user_id
+                })
+
                 return {
                     "success": True,
                     "message": "Activite CRM enregistree avec succes sur la fiche de lead Odoo.",
-                    "odoo_message_id": msg_id
+                    "odoo_id": activity_id,
+                    "model": "mail.activity",
+                    "odoo_message_id": activity_id  # Pour compatibilité de test
                 }
             except Exception as e:
-                logger.error(f"Erreur lors de la publication sur le lead: {e}")
-                raise RuntimeError(f"Echec de l'integration Odoo : {e}")
+                logger.error(f"Erreur lors de la creation de l'activite CRM: {e}")
+                raise RuntimeError(f"Echec de creation d'activite CRM dans Odoo : {e}")
 
         elif action_type == "none":
             return {
@@ -147,4 +219,27 @@ class OdooActionService:
                 "message": "Recommandation sans action automatique executee."
             }
         else:
-            raise ValueError(f"Type d'action '{action_type}' non supporte.")
+            raise OdooActionValidationError(f"Type d'action '{action_type}' non supporte.")
+
+    @staticmethod
+    def _get_default_supplier_id(product_id: int) -> int:
+        """Trouve le fournisseur du produit ou retourne le premier partenaire disponible."""
+        try:
+            prod = odoo.search_read("product.product", [["id", "=", product_id]], ["product_tmpl_id"], limit=1)
+            if prod and prod[0].get("product_tmpl_id"):
+                tmpl_id = prod[0]["product_tmpl_id"][0]
+                supplier_info = odoo.search_read("product.supplierinfo", [["product_tmpl_id", "=", tmpl_id]], ["partner_id"], limit=1)
+                if supplier_info and supplier_info[0].get("partner_id"):
+                    return supplier_info[0]["partner_id"][0]
+        except Exception as e:
+            logger.warning(f"Erreur lors de la recherche du fournisseur pour le produit {product_id}: {e}")
+
+        # Fallback
+        try:
+            partners = odoo.search_read("res.partner", [], ["id"], limit=1)
+            if partners:
+                return partners[0]["id"]
+        except Exception as e:
+            logger.error(f"Impossible de recuperer un partenaire Odoo : {e}")
+
+        raise OdooActionValidationError("Aucun partenaire (fournisseur) trouve dans Odoo pour lier a la commande.")
