@@ -7,13 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings as config_settings
 from app.database import engine, Base, SessionLocal
-from app.routers import kpis, chat, auth, alerts, settings, conversations, health_score, recommendations
+from app.routers import kpis, chat, auth, alerts, settings, conversations, health_score, recommendations, root_cause
 from app.services.kpi_sync import sync_all
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.alert_setting import AlertSetting
 from app.models.kpi_cache import KPIHistoryCache
 from app.models.ai_recommendation import AIRecommendation, AIActionLog
+from app.models.root_cause_analysis import RootCauseAnalysis
 from app.services.auth import get_password_hash
 
 logging.basicConfig(level=logging.INFO)
@@ -173,6 +174,7 @@ app.include_router(settings.router)
 app.include_router(conversations.router)
 app.include_router(health_score.router)
 app.include_router(recommendations.router)
+app.include_router(root_cause.router)
 
 
 

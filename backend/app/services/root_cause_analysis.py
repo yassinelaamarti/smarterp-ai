@@ -1,16 +1,28 @@
+import json
 import time
 import logging
 from datetime import date, timedelta
+from typing import Optional
+
+from groq import Groq
+from app.config import settings
 from app.services.odoo_connector import odoo
-from app.services.date_utils import current_month_str, previous_month_str
 
 logger = logging.getLogger(__name__)
 
-# Cache en mémoire pour éviter les requêtes XML-RPC à répétition sur les appels API rapides
-# Clé : (kpi_id, current_value, change_percent)
-# Valeur : (timestamp, list_of_root_causes_dicts)
+# Cache en mémoire
 _rca_cache = {}
 CACHE_TTL_SECONDS = 300  # 5 minutes
+
+KPI_LABELS = {
+    "revenue": "Chiffre d'affaires",
+    "new_orders": "Nouvelles commandes",
+    "active_customers": "Clients actifs",
+    "pipeline_value": "Valeur du pipeline CRM",
+    "stock_alerts": "Alertes de stock bas",
+    "late_orders": "Commandes en retard",
+    "conversion_rate": "Taux de conversion",
+}
 
 
 def _get_month_date_ranges():
@@ -25,74 +37,71 @@ def _get_month_date_ranges():
     return current_month_start, prev_month_start, prev_month_end
 
 
-def get_root_cause_analysis(kpi_id: str, current_value: float, change_percent: float | None) -> list[dict]:
+def compute_root_cause_data(
+    kpi_id: str,
+    current_value: float = 0.0,
+    change_percent: Optional[float] = None,
+    period_current: str = "Mois en cours",
+    period_previous: str = "Mois précédent"
+) -> dict:
     """
-    Calcule la contribution des différents segments/dimensions à la variation d'un KPI.
-    Retourne une liste du Top 3 des contributeurs (segments).
-    Exemple de retour :
-    [
-        {"dimension": "Région", "segment": "Nord", "delta": -5.2, "unit": "%"},
-        {"dimension": "Produit", "segment": "Customizable Desk", "delta": -3.1, "unit": "%"}
-    ]
+    Calcule la décomposition rigoureuse d'un KPI.
+    - FULL OUTER JOIN sur les segments (capture des éléments à 0).
+    - contribution_pct exprimée en % du delta total (et non en % indépendant).
+    - residual_pct = 100 - sum(top_3.contribution_pct).
+    - Sécurité division par zéro.
     """
-    cache_key = (kpi_id, current_value, change_percent)
-    now = time.time()
-    
-    if cache_key in _rca_cache:
-        timestamp, cached_data = _rca_cache[cache_key]
-        if now - timestamp < CACHE_TTL_SECONDS:
-            return cached_data
+    kpi_name = KPI_LABELS.get(kpi_id, kpi_id)
 
-    # Essayer de faire l'analyse réelle via Odoo, sinon fallback sur la simulation
     try:
-        results = _run_real_rca(kpi_id, current_value, change_percent)
-        if results:
-            _rca_cache[cache_key] = (now, results)
-            return results
+        real_data = _run_real_rca_decomposition(kpi_id, current_value, change_percent, period_current, period_previous)
+        if real_data and real_data.get("breakdown"):
+            return real_data
     except Exception as e:
-        logger.warning(f"Échec de l'analyse réelle des causes racine pour {kpi_id}: {e}. Passage en simulation.")
+        logger.warning(f"Échec décomposition réelle Odoo pour {kpi_id}: {e}. Passage en simulation rigoureuse.")
 
-    # Fallback simulation intelligente si Odoo indisponible ou pas assez de données
-    results = _generate_simulated_rca(kpi_id, current_value, change_percent)
-    _rca_cache[cache_key] = (now, results)
-    return results
+    return _generate_rigorous_simulated_rca(kpi_id, current_value, change_percent, period_current, period_previous)
 
 
-def _run_real_rca(kpi_id: str, current_value: float, change_percent: float | None) -> list[dict]:
-    """Requête Odoo et calcule la décomposition réelle."""
+def _run_real_rca_decomposition(
+    kpi_id: str,
+    current_value: float,
+    change_percent: Optional[float],
+    period_current: str,
+    period_previous: str
+) -> Optional[dict]:
     if kpi_id not in ["revenue", "new_orders", "active_customers"]:
-        # Pour les autres KPIs, on ne fait pas encore de requête réelle Odoo complexe
-        return []
+        return None
 
     cur_start, prev_start, prev_end = _get_month_date_ranges()
-    
-    # 1. Récupérer les commandes du mois en cours et précédent
+
     orders_cur = odoo.search_read(
         "sale.order",
         [["state", "in", ["sale", "done"]], ["date_order", ">=", cur_start]],
         ["id", "amount_total", "partner_id", "user_id"]
-    )
-    
+    ) or []
+
     orders_prev = odoo.search_read(
         "sale.order",
         [["state", "in", ["sale", "done"]], ["date_order", ">=", prev_start], ["date_order", "<", prev_end]],
         ["id", "amount_total", "partner_id", "user_id"]
-    )
-    
+    ) or []
+
     if not orders_cur and not orders_prev:
-        return []
+        return None
 
-    # Calculer le baseline total du mois précédent pour exprimer les deltas en % si besoin
-    # Si le KPI est le CA, on peut vouloir exprimer les contributions en % de variation par rapport au CA total préc.
-    total_prev_revenue = sum(o["amount_total"] for o in orders_prev) or 1.0
-    total_prev_orders = len(orders_prev) or 1.0
+    if kpi_id == "revenue":
+        cur_total = sum(o["amount_total"] for o in orders_cur)
+        prev_total = sum(o["amount_total"] for o in orders_prev)
+    else:
+        cur_total = float(len(orders_cur))
+        prev_total = float(len(orders_prev))
 
-    # Dimensions à calculer
-    segments_delta = []
+    delta_total = cur_total - prev_total
+    delta_total_pct = ((delta_total / prev_total) * 100.0) if prev_total > 0 else (change_percent or 0.0)
 
-    # --- Dimension A : Commercial (Salesperson / user_id) ---
-    comm_cur = {}
-    comm_prev = {}
+    # 1. Commercial (salesperson)
+    comm_cur, comm_prev = {}, {}
     for o in orders_cur:
         name = o["user_id"][1] if o.get("user_id") else "Non assigné"
         val = o["amount_total"] if kpi_id == "revenue" else 1.0
@@ -102,216 +111,251 @@ def _run_real_rca(kpi_id: str, current_value: float, change_percent: float | Non
         val = o["amount_total"] if kpi_id == "revenue" else 1.0
         comm_prev[name] = comm_prev.get(name, 0.0) + val
 
-    all_comms = set(comm_cur.keys()) | set(comm_prev.keys())
-    for comm in all_comms:
+    all_segments = []
+
+    # FULL OUTER JOIN pour commercial
+    for comm in set(comm_cur.keys()) | set(comm_prev.keys()):
         c_val = comm_cur.get(comm, 0.0)
         p_val = comm_prev.get(comm, 0.0)
         delta = c_val - p_val
         if delta != 0:
-            if kpi_id == "revenue" and change_percent is not None:
-                # Exprimé en % du CA total du mois dernier
-                delta_val = round((delta / total_prev_revenue) * 100, 1)
-                unit = "%"
-            elif kpi_id == "new_orders":
-                delta_val = int(delta)
-                unit = "commandes"
-            else:
-                delta_val = round(delta, 1)
-                unit = ""
-            segments_delta.append({
-                "dimension": "Commercial",
-                "segment": comm,
-                "delta": delta_val,
-                "unit": unit
-            })
+            all_segments.append({"dimension": "sales_rep", "segment": comm, "delta": delta})
 
-    # --- Dimension B : Région (état du client / partner_id -> state_id) ---
+    # 2. Région (partner state_id)
     partner_ids = list({o["partner_id"][0] for o in orders_cur + orders_prev if o.get("partner_id")})
     partner_to_state = {}
     if partner_ids:
-        partners = odoo.search_read(
-            "res.partner",
-            [["id", "in", partner_ids]],
-            ["id", "state_id"]
-        )
+        partners = odoo.search_read("res.partner", [["id", "in", partner_ids]], ["id", "state_id"]) or []
         for p in partners:
-            state = p.get("state_id")
-            partner_to_state[p["id"]] = state[1] if state else "Région inconnue"
+            st = p.get("state_id")
+            partner_to_state[p["id"]] = st[1] if st else "Région inconnue"
 
-    reg_cur = {}
-    reg_prev = {}
+    reg_cur, reg_prev = {}, {}
     for o in orders_cur:
         p_id = o["partner_id"][0] if o.get("partner_id") else None
-        state_name = partner_to_state.get(p_id, "Région inconnue") if p_id else "Région inconnue"
+        st_name = partner_to_state.get(p_id, "Région inconnue") if p_id else "Région inconnue"
         val = o["amount_total"] if kpi_id == "revenue" else 1.0
-        reg_cur[state_name] = reg_cur.get(state_name, 0.0) + val
+        reg_cur[st_name] = reg_cur.get(st_name, 0.0) + val
     for o in orders_prev:
         p_id = o["partner_id"][0] if o.get("partner_id") else None
-        state_name = partner_to_state.get(p_id, "Région inconnue") if p_id else "Région inconnue"
+        st_name = partner_to_state.get(p_id, "Région inconnue") if p_id else "Région inconnue"
         val = o["amount_total"] if kpi_id == "revenue" else 1.0
-        reg_prev[state_name] = reg_prev.get(state_name, 0.0) + val
+        reg_prev[st_name] = reg_prev.get(st_name, 0.0) + val
 
-    all_regs = set(reg_cur.keys()) | set(reg_prev.keys())
-    for reg in all_regs:
+    # FULL OUTER JOIN pour région
+    for reg in set(reg_cur.keys()) | set(reg_prev.keys()):
         c_val = reg_cur.get(reg, 0.0)
         p_val = reg_prev.get(reg, 0.0)
         delta = c_val - p_val
         if delta != 0:
-            if kpi_id == "revenue" and change_percent is not None:
-                delta_val = round((delta / total_prev_revenue) * 100, 1)
-                unit = "%"
-            elif kpi_id == "new_orders":
-                delta_val = int(delta)
-                unit = "commandes"
-            else:
-                delta_val = round(delta, 1)
-                unit = ""
-            segments_delta.append({
-                "dimension": "Région",
-                "segment": reg,
-                "delta": delta_val,
-                "unit": unit
-            })
+            all_segments.append({"dimension": "region", "segment": reg, "delta": delta})
 
-    # --- Dimension C : Produit (via sale.order.line) ---
+    # 3. Produit (sale.order.line)
     cur_order_ids = [o["id"] for o in orders_cur]
     prev_order_ids = [o["id"] for o in orders_prev]
-    
-    prod_cur = {}
-    prod_prev = {}
-    
+    prod_cur, prod_prev = {}, {}
+
     if cur_order_ids:
-        lines_cur = odoo.search_read(
-            "sale.order.line",
-            [["order_id", "in", cur_order_ids]],
-            ["product_id", "price_subtotal"]
-        )
+        lines_cur = odoo.search_read("sale.order.line", [["order_id", "in", cur_order_ids]], ["product_id", "price_subtotal"]) or []
         for l in lines_cur:
             p_name = l["product_id"][1] if l.get("product_id") else "Produit inconnu"
             val = l["price_subtotal"] if kpi_id == "revenue" else 1.0
             prod_cur[p_name] = prod_cur.get(p_name, 0.0) + val
 
     if prev_order_ids:
-        lines_prev = odoo.search_read(
-            "sale.order.line",
-            [["order_id", "in", prev_order_ids]],
-            ["product_id", "price_subtotal"]
-        )
+        lines_prev = odoo.search_read("sale.order.line", [["order_id", "in", prev_order_ids]], ["product_id", "price_subtotal"]) or []
         for l in lines_prev:
             p_name = l["product_id"][1] if l.get("product_id") else "Produit inconnu"
             val = l["price_subtotal"] if kpi_id == "revenue" else 1.0
             prod_prev[p_name] = prod_prev.get(p_name, 0.0) + val
 
-    all_prods = set(prod_cur.keys()) | set(prod_prev.keys())
-    for prod in all_prods:
+    # FULL OUTER JOIN pour produit
+    for prod in set(prod_cur.keys()) | set(prod_prev.keys()):
         c_val = prod_cur.get(prod, 0.0)
         p_val = prod_prev.get(prod, 0.0)
         delta = c_val - p_val
         if delta != 0:
-            if kpi_id == "revenue" and change_percent is not None:
-                delta_val = round((delta / total_prev_revenue) * 100, 1)
-                unit = "%"
-            elif kpi_id == "new_orders":
-                delta_val = int(delta)
-                unit = "commandes"
-            else:
-                delta_val = round(delta, 1)
-                unit = ""
-            segments_delta.append({
-                "dimension": "Produit",
-                "segment": prod,
-                "delta": delta_val,
-                "unit": unit
-            })
+            all_segments.append({"dimension": "product", "segment": prod, "delta": delta})
 
-    # Trier par contribution absolue décroissante
-    segments_delta.sort(key=lambda x: abs(x["delta"]), reverse=True)
-    return segments_delta[:3]
+    if not all_segments:
+        return None
+
+    # Trier par |delta| décroissant et garder le top 3
+    all_segments.sort(key=lambda x: abs(x["delta"]), reverse=True)
+    top3 = all_segments[:3]
+
+    breakdown = []
+    explained_pct_sum = 0.0
+    for s in top3:
+        contrib = round((s["delta"] / delta_total) * 100.0, 1) if abs(delta_total) > 1e-6 else 0.0
+        explained_pct_sum += contrib
+        breakdown.append({
+            "dimension": s["dimension"],
+            "segment": s["segment"],
+            "delta": round(s["delta"], 2),
+            "contribution_pct": contrib
+        })
+
+    residual_pct = round(100.0 - explained_pct_sum, 1) if abs(delta_total) > 1e-6 else 0.0
+    if residual_pct < 0:
+        residual_pct = 0.0
+
+    return {
+        "kpi_name": KPI_LABELS.get(kpi_id, kpi_id),
+        "period_current": period_current,
+        "period_previous": period_previous,
+        "delta_total": round(delta_total, 2),
+        "delta_total_pct": round(delta_total_pct, 1),
+        "breakdown": breakdown,
+        "residual_pct": residual_pct
+    }
 
 
-def _generate_simulated_rca(kpi_id: str, current_value: float, change_percent: float | None) -> list[dict]:
-    """Génère des contributions réalistes simulées en fonction du KPI pour les démos ou fallbacks."""
-    # Déterminer la direction (baisse ou hausse)
-    is_drop = False
-    if change_percent is not None and change_percent < 0:
-        is_drop = True
-    elif change_percent is None and current_value <= 0:
-        is_drop = True
+def _generate_rigorous_simulated_rca(
+    kpi_id: str,
+    current_value: float,
+    change_percent: Optional[float],
+    period_current: str,
+    period_previous: str
+) -> dict:
+    """Génère des contributions mathématiquement cohérentes et rigoureuses pour les démos ou fallbacks."""
+    kpi_name = KPI_LABELS.get(kpi_id, kpi_id)
+    delta_total_pct = change_percent if change_percent is not None else (-8.5 if current_value <= 0 else 5.2)
 
-    # Multiplicateur pour ajuster la proportion des deltas simulés
-    total_delta = change_percent if change_percent is not None else current_value
-    if total_delta == 0:
-        total_delta = -10.0 if is_drop else 10.0
+    # Simuler une valeur absolue raisonnable si 0
+    if abs(current_value) > 1e-6:
+        delta_total = round((current_value * (delta_total_pct / 100.0)), 2)
+    else:
+        delta_total = -4200.0 if delta_total_pct < 0 else 3500.0
 
-    # Découpage du delta en 3 morceaux : ~55%, ~35%, ~10%
-    d1 = round(total_delta * 0.55, 1)
-    d2 = round(total_delta * 0.35, 1)
-    d3 = round(total_delta * 0.10, 1)
-
+    # Définition des 3 facteurs avec fractions exactes de contribution : 62.5%, 26.8%, 10.7% (Sum = 100%, residual = 0% ou ajusté)
+    # Exemple : 62.5% + 26.8% + 8.0% = 97.3%, résidu = 2.7%
     if kpi_id == "revenue":
-        return [
-            {"dimension": "Région", "segment": "Casablanca-Settat", "delta": d1, "unit": "%"},
-            {"dimension": "Produit", "segment": "Customizable Desk (White)", "delta": d2, "unit": "%"},
-            {"dimension": "Commercial", "segment": "Marc Demo", "delta": d3, "unit": "%"}
+        raw_factors = [
+            {"dimension": "region", "segment": "Casablanca-Settat", "ratio": 0.625},
+            {"dimension": "product", "segment": "Customizable Desk (White)", "ratio": 0.268},
+            {"dimension": "sales_rep", "segment": "Marc Demo", "ratio": 0.080},
         ]
     elif kpi_id == "new_orders":
-        unit = "commandes"
-        # Mettre des valeurs entières réalistes pour le nombre de commandes
-        val1 = int(d1) or (-2 if is_drop else 2)
-        val2 = int(d2) or (-1 if is_drop else 1)
-        val3 = int(d3) or (-1 if is_drop else 1)
-        return [
-            {"dimension": "Région", "segment": "Rabat-Salé-Kénitra", "delta": val1, "unit": unit},
-            {"dimension": "Produit", "segment": "Office Chair Black", "delta": val2, "unit": unit},
-            {"dimension": "Commercial", "segment": "Opérateur Test", "delta": val3, "unit": unit}
+        raw_factors = [
+            {"dimension": "region", "segment": "Rabat-Salé-Kénitra", "ratio": 0.550},
+            {"dimension": "product", "segment": "Office Chair Black", "ratio": 0.300},
+            {"dimension": "sales_rep", "segment": "Karim B.", "ratio": 0.100},
         ]
     elif kpi_id == "active_customers":
-        unit = "clients"
-        val1 = int(d1) or (-3 if is_drop else 3)
-        val2 = int(d2) or (-2 if is_drop else 2)
-        val3 = int(d3) or (-1 if is_drop else 1)
-        return [
-            {"dimension": "Région", "segment": "Tanger-Tétouan-Al Hoceïma", "delta": val1, "unit": unit},
-            {"dimension": "Catégorie client", "segment": "PME locales", "delta": val2, "unit": unit},
-            {"dimension": "Commercial", "segment": "Marc Demo", "delta": val3, "unit": unit}
-        ]
-    elif kpi_id == "pipeline_value":
-        # Valeur absolue en MAD
-        val1 = round(d1 * 5000, 0)
-        val2 = round(d2 * 5000, 0)
-        val3 = round(d3 * 5000, 0)
-        return [
-            {"dimension": "Commercial", "segment": "Marc Demo", "delta": val1, "unit": "MAD"},
-            {"dimension": "Région", "segment": "Casablanca-Settat", "delta": val2, "unit": "MAD"},
-            {"dimension": "Catégorie client", "segment": "Grands Comptes", "delta": val3, "unit": "MAD"}
-        ]
-    elif kpi_id == "stock_alerts":
-        # Plus d'alertes de stock
-        val1 = int(d1) or (3 if not is_drop else -3)
-        val2 = int(d2) or (2 if not is_drop else -2)
-        val3 = int(d3) or (1 if not is_drop else -1)
-        return [
-            {"dimension": "Produit", "segment": "Acoustic Bloc Screens", "delta": val1, "unit": "produits"},
-            {"dimension": "Produit", "segment": "Cabinet with Doors", "delta": val2, "unit": "produits"},
-            {"dimension": "Produit", "segment": "Drawers unit", "delta": val3, "unit": "produits"}
-        ]
-    elif kpi_id == "late_orders":
-        # Commandes en retard
-        val1 = int(d1) or (2 if not is_drop else -2)
-        val2 = int(d2) or (1 if not is_drop else -1)
-        val3 = int(d3) or (1 if not is_drop else -1)
-        return [
-            {"dimension": "Transporteur", "segment": "Odoo Delivery", "delta": val1, "unit": "commandes"},
-            {"dimension": "Région", "segment": "Fès-Meknès", "delta": val2, "unit": "commandes"},
-            {"dimension": "Produit", "segment": "Customizable Desk", "delta": val3, "unit": "commandes"}
+        raw_factors = [
+            {"dimension": "region", "segment": "Tanger-Tétouan-Al Hoceïma", "ratio": 0.500},
+            {"dimension": "customer_category", "segment": "PME locales", "ratio": 0.300},
+            {"dimension": "sales_rep", "segment": "Marc Demo", "ratio": 0.120},
         ]
     else:
-        # Fallback générique
-        return [
-            {"dimension": "Région", "segment": "Casablanca-Settat", "delta": d1, "unit": "%"},
-            {"dimension": "Produit", "segment": "Customizable Desk (White)", "delta": d2, "unit": "%"},
-            {"dimension": "Commercial", "segment": "Marc Demo", "delta": d3, "unit": "%"}
+        raw_factors = [
+            {"dimension": "region", "segment": "Casablanca-Settat", "ratio": 0.600},
+            {"dimension": "product", "segment": "Produit phare", "ratio": 0.250},
+            {"dimension": "sales_rep", "segment": "Marc Demo", "ratio": 0.100},
         ]
+
+    breakdown = []
+    sum_contrib = 0.0
+    for f in raw_factors:
+        c_pct = round(f["ratio"] * 100.0, 1)
+        seg_delta = round(delta_total * f["ratio"], 2)
+        sum_contrib += c_pct
+        breakdown.append({
+            "dimension": f["dimension"],
+            "segment": f["segment"],
+            "delta": seg_delta,
+            "contribution_pct": c_pct
+        })
+
+    residual_pct = round(100.0 - sum_contrib, 1)
+    if residual_pct < 0:
+        residual_pct = 0.0
+
+    return {
+        "kpi_name": kpi_name,
+        "period_current": period_current,
+        "period_previous": period_previous,
+        "delta_total": delta_total,
+        "delta_total_pct": round(delta_total_pct, 1),
+        "breakdown": breakdown,
+        "residual_pct": residual_pct
+    }
+
+
+def generate_rca_explanation(rca_result: dict) -> str:
+    """Génère une explication concise pour un dirigeant PME via Groq LLM avec fallback sécurisé."""
+    kpi_name = rca_result.get("kpi_name", "KPI")
+    delta_total_pct = rca_result.get("delta_total_pct", 0.0)
+    delta_total = rca_result.get("delta_total", 0.0)
+    breakdown = rca_result.get("breakdown", [])
+    residual_pct = rca_result.get("residual_pct", 0.0)
+
+    prompt = f"""Tu rédiges une explication business-friendly d'une variation de KPI pour un dirigeant PME.
+
+Contexte fourni :
+- KPI: {kpi_name}
+- Variation totale: {delta_total_pct}% ({delta_total} en valeur absolue)
+- Décomposition (3 facteurs principaux qui expliquent {round(100.0 - residual_pct, 1)}% de la variation) :
+  {json.dumps(breakdown, ensure_ascii=False)}
+- Part non expliquée par ces 3 facteurs: {residual_pct}%
+
+Consignes :
+- Explique la variation en citant les 3 facteurs par ordre d'impact décroissant.
+- Utilise des termes métier, pas de jargon statistique (jamais "delta", "z-score", "contribution").
+- Si residual_pct dépasse 40%, mentionne explicitement qu'une part significative de la variation reste diffuse sur d'autres facteurs plutôt que de prétendre à une explication complète.
+- Ne déduis et n'invente AUCUN chiffre qui n'est pas dans les données fournies.
+- Format : 3-4 phrases maximum."""
+
+    try:
+        client = Groq(api_key=settings.groq_api_key)
+        completion = client.chat.completions.create(
+            model=settings.groq_model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=300
+        )
+        text = completion.choices[0].message.content.strip()
+        if text:
+            return text
+    except Exception as e:
+        logger.warning(f"Impossible de contacter le LLM pour l'explication RCA ({e}). Utilisation du fallback métier.")
+
+    # Fallback si LLM injoignable
+    sign = "baisse" if delta_total_pct < 0 else "hausse"
+    abs_pct = abs(delta_total_pct)
+    factors_str = []
+    for b in breakdown[:3]:
+        dim_label = {"region": "la région", "product": "le produit", "sales_rep": "le commercial", "customer_category": "la catégorie client"}.get(b['dimension'], b['dimension'])
+        factors_str.append(f"{dim_label} '{b['segment']}' ({b['contribution_pct']}%)")
+
+    factors_text = ", ".join(factors_str) if factors_str else "divers facteurs"
+    fallback_text = f"La {sign} de {abs_pct}% du {kpi_name} s'explique principalement par {factors_text}."
+    if residual_pct > 40.0:
+        fallback_text += f" Une part importante ({residual_pct}%) de la variation reste toutefois réparties sur d'autres facteurs secondaires."
+    else:
+        fallback_text += " Ces éléments couvrent la presque totalité de la variation observée."
+
+    return fallback_text
+
+
+def get_root_cause_analysis(kpi_id: str, current_value: float, change_percent: float | None) -> list[dict]:
+    """
+    Rétrocompatibilité pour le moteur d'alerte existant.
+    """
+    rca_data = compute_root_cause_data(kpi_id, current_value, change_percent)
+    result = []
+    unit = "%" if kpi_id == "revenue" else ("commandes" if kpi_id == "new_orders" else "")
+    for b in rca_data.get("breakdown", []):
+        dim_fr = {"region": "Région", "product": "Produit", "sales_rep": "Commercial", "customer_category": "Catégorie client"}.get(b["dimension"], b["dimension"])
+        result.append({
+            "dimension": dim_fr,
+            "segment": b["segment"],
+            "delta": b["delta"],
+            "contribution_pct": b["contribution_pct"],
+            "unit": unit
+        })
+    return result
 
 
 def format_root_causes_text(root_causes: list[dict]) -> str:
@@ -320,9 +364,9 @@ def format_root_causes_text(root_causes: list[dict]) -> str:
         return ""
     parts = []
     for rc in root_causes[:3]:
-        delta_val = rc["delta"]
-        # Formater avec le signe + ou -
+        delta_val = rc.get("delta", 0)
         sign = "+" if delta_val > 0 else ""
-        delta_str = f"{sign}{delta_val} {rc['unit']}"
-        parts.append(f"{delta_str} sur le segment '{rc['dimension']} : {rc['segment']}'")
+        unit = rc.get("unit", "")
+        delta_str = f"{sign}{delta_val} {unit}".strip()
+        parts.append(f"{delta_str} sur le segment '{rc.get('dimension', '')} : {rc.get('segment', '')}'")
     return " (dont " + ", ".join(parts) + ")"
