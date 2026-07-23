@@ -1,27 +1,27 @@
 import uuid
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
-from typing import Optional, Any, Literal
+from typing import Optional, Any
+from app.models.ai_recommendation import RecommendationSource, RecommendationAction, RecommendationStatus
 
 
 class AIRecommendationSchema(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID
-    source_type: Literal["anomaly", "health_score", "kpi_alert"]
+    source_type: RecommendationSource
     source_id: str
     title: str
     explanation: str
-    action_type: Literal["restock_order", "send_email_campaign", "create_crm_activity", "none"]
+    action_type: RecommendationAction
     action_payload: Optional[dict[str, Any]] = None
     estimated_impact: Optional[dict[str, Any]] = None  # ex: {"label": "+12 000 MAD", "confidence": "medium"}
-    status: Literal["pending", "executed", "dismissed", "failed"]
+    status: RecommendationStatus
     executed_by: Optional[int] = None
     executed_at: Optional[datetime] = None
     created_at: datetime
     expires_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class AIRecommendationAuditSchema(BaseModel):
@@ -39,5 +39,5 @@ class AIRecommendationAuditSchema(BaseModel):
     success: bool
     error_message: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
+
