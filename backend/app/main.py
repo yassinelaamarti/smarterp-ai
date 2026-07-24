@@ -119,6 +119,12 @@ async def lifespan(app: FastAPI):
             db.add_all(default_settings)
             db.commit()
             logger.info("Default alert settings seeded.")
+        else:
+            goal_exists = db.query(AlertSetting).filter(AlertSetting.key == "revenue_monthly_goal").first()
+            if not goal_exists:
+                db.add(AlertSetting(key="revenue_monthly_goal", value=50000.0, label="Objectif mensuel (MAD)"))
+                db.commit()
+                logger.info("Added missing revenue_monthly_goal setting.")
 
         # Seeder l'historique de démo s'il est vide
         history_exists = db.query(KPIHistoryCache).first()

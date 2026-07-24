@@ -1,10 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import { useKpis } from "@/hooks/useKpis";
 import { KPICard } from "./KPICard";
+import { KPIDetailModal } from "./KPIDetailModal";
+import type { KPI } from "@/types";
 
 export function KPIGrid() {
   const { data: kpis, isLoading, isError, error } = useKpis();
+  const [selectedKpi, setSelectedKpi] = useState<KPI | null>(null);
 
   if (isLoading) {
     return (
@@ -30,10 +34,16 @@ export function KPIGrid() {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {kpis?.map((kpi) => (
-        <KPICard key={kpi.id} kpi={kpi} />
-      ))}
-    </div>
+    <>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {kpis?.map((kpi) => (
+          <KPICard key={kpi.id} kpi={kpi} onClick={setSelectedKpi} />
+        ))}
+      </div>
+      
+      {selectedKpi && (
+        <KPIDetailModal kpi={selectedKpi} onClose={() => setSelectedKpi(null)} />
+      )}
+    </>
   );
 }

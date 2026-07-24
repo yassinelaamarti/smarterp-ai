@@ -18,6 +18,7 @@ import type { KPI } from "@/types";
 
 interface KPICardProps {
   kpi: KPI;
+  onClick?: (kpi: KPI) => void;
 }
 
 const trendConfig = {
@@ -39,7 +40,7 @@ const kpiIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   late_orders: Clock,
 };
 
-export function KPICard({ kpi }: KPICardProps) {
+export function KPICard({ kpi, onClick }: KPICardProps) {
   const trend = kpi.trend ? trendConfig[kpi.trend] : null;
   const TrendIcon = trend?.icon;
   const Icon = kpiIcons[kpi.id] || Package;
@@ -48,13 +49,17 @@ export function KPICard({ kpi }: KPICardProps) {
   const isAlert = (kpi.id === "stock_alerts" || kpi.id === "late_orders") && kpi.value > 0;
 
   return (
-    <div className={cn(
+    <div 
+      onClick={() => onClick && onClick(kpi)}
+      className={cn(
       "relative overflow-hidden rounded-2xl border p-6 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md group",
+      onClick ? "cursor-pointer" : "",
       isAlert 
-        ? "bg-amber-50/40 border-amber-200/80 shadow-sm" 
-        : "bg-white border-slate-200/80 shadow-sm"
+        ? "bg-amber-50/40 border-amber-200/80 shadow-sm hover:border-amber-300" 
+        : "bg-white border-slate-200/80 shadow-sm hover:border-blue-300"
     )}>
       <div className="flex items-center justify-between">
+
         <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{kpi.label}</p>
         <div className={cn(
           "flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors duration-200 bg-slate-50 border border-slate-100 group-hover:border-slate-200 group-hover:text-slate-700",

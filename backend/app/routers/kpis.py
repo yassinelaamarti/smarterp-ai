@@ -27,6 +27,18 @@ def revenue_history(months: int = Query(default=6, ge=1, le=24), current_user: U
     """Historique du CA depuis le cache PostgreSQL."""
     return get_monthly_revenue_history(months)
 
+@router.get("/{kpi_id}/history")
+def kpi_detailed_history(kpi_id: str, period: str = Query("month", regex="^(week|month|trimester)$"), current_user: User = Depends(get_current_active_user)):
+    """Historique détaillé d'un KPI spécifique pour un affichage graphique approfondi."""
+    from app.services.kpi_history_service import get_kpi_history
+    return get_kpi_history(kpi_id, period)
+
+@router.get("/{kpi_id}/context")
+def kpi_context(kpi_id: str, period: str = Query("month", regex="^(week|month|trimester)$"), current_user: User = Depends(get_current_active_user)):
+    """Données contextuelles spécifiques au KPI (entonnoir, alertes, objectifs, etc.)"""
+    from app.services.kpi_context_service import get_kpi_context
+    return get_kpi_context(kpi_id, period)
+
 
 @router.post("/sync", status_code=202)
 def trigger_sync(current_user: User = Depends(get_current_active_user)):

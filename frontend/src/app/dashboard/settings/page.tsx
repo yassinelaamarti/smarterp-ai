@@ -241,6 +241,7 @@ export default function SettingsPage() {
             </div>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
+            {renderInput("revenue_monthly_goal", "Objectif mensuel de Chiffre d&apos;affaires", "Montant cible pour le tracker d&apos;objectif sur le tableau de bord.", "MAD")}
             {renderInput("revenue_warning", "Baisse du Chiffre d&apos;affaires (Avertissement)", "Baisse tolérée avant l&apos;émission d&apos;un signalement de ralentissement des ventes.", "%")}
             {renderInput("revenue_critical", "Chiffre d&apos;affaires en chute (Critique)", "Seuil critique de baisse mensuelle nécessitant un audit financier rapide.", "%")}
             {renderInput("new_orders_warning", "Nouvelles commandes (Avertissement)", "Fléchissement du rythme de signature ou de création de bons de commande.", "%")}
