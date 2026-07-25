@@ -84,5 +84,6 @@ logs/
 # ----------------------------
 # Divers
 # ----------------------------
+backend/test_reports/
 coverage/
 dist/
