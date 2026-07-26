@@ -108,17 +108,33 @@ class OdooActionService:
                 except Exception as e:
                     logger.warning(f"Impossible de lire le template de mail {template_id} dans Odoo: {e}")
 
+            # Récupérer l'adresse email de la société dans Odoo (res.company) ou de la payload
+            email_from = payload.get("email_from")
+            if not email_from:
+                try:
+                    company_data = odoo.search_read("res.company", [], ["name", "email"], limit=1)
+                    if company_data and company_data[0].get("email"):
+                        comp_name = company_data[0].get("name") or "Entreprise"
+                        comp_email = company_data[0]["email"]
+                        email_from = f'"{comp_name}" <{comp_email}>'
+                except Exception as e:
+                    logger.warning(f"Impossible de lire l'email de la societe dans Odoo: {e}")
+
             # Créer les e-mails dans la file d'attente d'Odoo (mail.mail avec state='outgoing')
             mail_ids = []
             for partner in partners_data:
                 try:
-                    mail_id = odoo.create("mail.mail", {
+                    mail_vals = {
                         "subject": subject,
                         "body_html": body_html,
                         "email_to": partner["email"],
                         "recipient_ids": [[6, 0, [partner["id"]]]],
                         "state": "outgoing"
-                    })
+                    }
+                    if email_from:
+                        mail_vals["email_from"] = email_from
+
+                    mail_id = odoo.create("mail.mail", mail_vals)
                     mail_ids.append(mail_id)
                 except Exception as e:
                     logger.error(f"Erreur de creation de mail pour le partenaire {partner['id']}: {e}")
