@@ -1,3 +1,4 @@
+import uuid
 import unittest
 from unittest.mock import MagicMock, patch
 from datetime import datetime
@@ -241,4 +242,142 @@ class TestRecommendations(unittest.TestCase):
         self.assertIn("dont ", alert.message)
         self.assertIsNotNone(alert.source_data.root_causes)
         self.assertTrue(len(alert.source_data.root_causes) > 0)
+
+    @patch("app.services.recommendation_generator.odoo")
+    @patch("app.services.recommendation_generator._client")
+    def test_action_type_guardrail_enforcement(self, mock_groq_client, mock_odoo):
+        from app.services.recommendation_generator import generate_recommendations
+        from app.models.ai_recommendation import RecommendationAction
+
+        mock_odoo.search_read.return_value = [{"id": 5, "name": "Produit X", "qty_available": 1, "lst_price": 100.0}]
+        # Le LLM tente d'imposer un send_email_campaign sur du stock
+        mock_completion = MagicMock()
+        mock_completion.choices = [
+            MagicMock(message=MagicMock(content="""
+            {
+                "title": "Email pour stock",
+                "explanation": "Test guardrail",
+                "action_type": "send_email_campaign",
+                "action_payload": {},
+                "estimated_impact": "+500 MAD"
+            }
+            """))
+        ]
+        mock_groq_client.chat.completions.create.return_value = mock_completion
+        self.db.query().filter().first.return_value = None
+
+        alert = Alert(id="stock_alerts", kpi_id="stock_alerts", message="Stock bas", severity="warning", is_anomaly=False, timestamp=datetime.utcnow())
+        generate_recommendations(self.db, [alert])
+
+        added_rec = self.db.add.call_args[0][0]
+        # Le garde-fou doit forcer 'none' au lieu de 'send_email_campaign'
+        self.assertEqual(added_rec.action_type, RecommendationAction.none)
+
+    @patch("app.services.recommendation_generator.odoo")
+    def test_auto_expiration_of_resolved_anomalies(self, mock_odoo):
+        from app.services.recommendation_generator import generate_recommendations, RecommendationStatus
+        mock_odoo.search_read.return_value = [] # Aucun stock bas
+
+        existing_rec = AIRecommendation(
+            id=uuid.uuid4(),
+            tenant_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+            source_type="anomaly",
+            source_id="stock_product_99",
+            title="Old Rec",
+            explanation="Old",
+            action_type="restock_order",
+            status=RecommendationStatus.pending
+        )
+        self.db.query().filter().all.return_value = [existing_rec]
+
+        generate_recommendations(self.db, [])
+        # L'anomalie stock_product_99 ayant disparu, elle doit être marquée expired
+        self.assertEqual(existing_rec.status, RecommendationStatus.expired)
+
+    @patch("app.services.recommendation_generator.odoo")
+    @patch("app.services.recommendation_generator._client")
+    def test_in_place_update_for_existing_pending_recommendation(self, mock_groq_client, mock_odoo):
+        from app.services.recommendation_generator import generate_recommendations, RecommendationStatus
+
+        mock_odoo.search_read.return_value = [{"id": 12, "name": "Produit 12", "qty_available": 1, "lst_price": 500.0}]
+        mock_completion = MagicMock()
+        mock_completion.choices = [
+            MagicMock(message=MagicMock(content="""
+            {
+                "title": "Mise a jour commande",
+                "explanation": "Quantite encore plus faible",
+                "action_type": "restock_order",
+                "action_payload": {"product_id": 12, "quantity": 100},
+                "estimated_impact": "+5 000 MAD"
+            }
+            """))
+        ]
+        mock_groq_client.chat.completions.create.return_value = mock_completion
+
+        existing_rec = AIRecommendation(
+            id=uuid.uuid4(),
+            tenant_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+            source_type="anomaly",
+            source_id="stock_product_12",
+            title="Ancien Titre",
+            explanation="Ancienne explication",
+            action_type="restock_order",
+            action_payload={"product_id": 12, "quantity": 50},
+            status=RecommendationStatus.pending
+        )
+        self.db.query().filter().first.return_value = existing_rec
+
+        alert = Alert(id="stock_alerts", kpi_id="stock_alerts", message="Stock bas 12", severity="critical", is_anomaly=True, timestamp=datetime.utcnow())
+        generate_recommendations(self.db, [alert])
+
+        # Verifier que add N'A PAS été appelé (mise à jour en place)
+        self.assertFalse(self.db.add.called)
+        self.assertEqual(existing_rec.title, "Mise a jour commande")
+        self.assertEqual(existing_rec.action_payload["quantity"], 100)
+
+    @patch("app.services.recommendation_generator.odoo")
+    @patch("app.services.recommendation_generator._client")
+    def test_no_anomaly_appears_both_individual_and_overflow(self, mock_groq_client, mock_odoo):
+        from app.services.recommendation_generator import generate_recommendations, MAX_INDIVIDUAL_RECOMMENDATIONS
+
+        # Générer 20 produits en stock bas
+        products = [{"id": i, "name": f"Product {i}", "qty_available": 1, "lst_price": 100.0} for i in range(1, 21)]
+        mock_odoo.search_read.return_value = products
+
+        mock_completion = MagicMock()
+        mock_completion.choices = [
+            MagicMock(message=MagicMock(content="""
+            {
+                "title": "Commander Produit",
+                "explanation": "Stock bas",
+                "action_type": "restock_order",
+                "action_payload": {},
+                "estimated_impact": "+100 MAD"
+            }
+            """))
+        ]
+        mock_groq_client.chat.completions.create.return_value = mock_completion
+        self.db.query().filter().first.return_value = None
+
+        alert = Alert(id="stock_alerts", kpi_id="stock_alerts", message="Multiples stock bas", severity="critical", is_anomaly=False, timestamp=datetime.utcnow())
+        
+        added_recs = []
+        self.db.add.side_effect = lambda rec: added_recs.append(rec)
+
+        generate_recommendations(self.db, [alert])
+
+        # Extraire les source_ids des cartes individuelles et de la carte d'overflow
+        individual_ids = [r.source_id for r in added_recs if r.source_id != "summary_overflow_anomalies"]
+        overflow_rec = next((r for r in added_recs if r.source_id == "summary_overflow_anomalies"), None)
+
+        self.assertIsNotNone(overflow_rec)
+        self.assertEqual(len(individual_ids), MAX_INDIVIDUAL_RECOMMENDATIONS)
+
+        overflow_items_list = overflow_rec.action_payload.get("items", [])
+        # Vérifier qu'aucune carte individuelle n'est énumérée dans l'overflow
+        for ind_id in individual_ids:
+            prod_id_str = ind_id.replace("stock_product_", "")
+            matching = [item for item in overflow_items_list if f"Product {prod_id_str} " in item]
+            self.assertEqual(len(matching), 0, f"L'anomalie {ind_id} ne doit pas figurer dans l'overflow.")
+
 

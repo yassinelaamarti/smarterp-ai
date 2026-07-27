@@ -13,182 +13,327 @@ logger = logging.getLogger(__name__)
 _client = Groq(api_key=settings.groq_api_key)
 
 DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
+MAX_INDIVIDUAL_RECOMMENDATIONS = 12
+
+ALLOWED_ACTIONS_PER_DOMAIN = {
+    "stock": ["restock_order", "none"],
+    "customer": ["send_email_campaign", "none"],
+    "revenue": ["send_email_campaign", "none"],
+    "crm": ["create_crm_activity", "none"],
+    "global_trend": ["none"],
+}
 
 SYSTEM_PROMPT = """Tu es un module d'aide à la décision pour un dirigeant PME.
-On te donne un signal détecté (anomalie, alerte, score de santé) avec ses données réelles provenant d'Odoo.
-Tu dois répondre UNIQUEMENT sous la forme d'un objet JSON valide et strict, sans aucun autre texte ou mise en forme (pas de markdown).
+On te donne un signal détecté (anomalie, alerte) avec ses données réelles provenant d'Odoo.
+Tu dois répondre UNIQUEMENT sous la forme d'un objet JSON valide et strict, sans aucun autre texte ou mise en forme.
 
 Structure JSON attendue :
 {
-  "title": string (max 80 caractères, orienté action, ex: "Réactiver 17 clients inactifs", "Réapprovisionner Customizable Desk"),
-  "explanation": string (2-3 phrases, business-friendly, pas de jargon technique),
-  "action_type": "restock_order" | "send_email_campaign" | "create_crm_activity" | "none",
-  "action_payload": object (voir schémas ci-dessous),
+  "title": string (max 80 caractères, orienté action),
+  "explanation": string (2-3 phrases, business-friendly),
+  "action_type": string (doit correspondre STRICTEMENT à l'une des valeurs autorisées fournies),
+  "action_payload": object,
   "estimated_impact": {
-    "label": string (ex: "+12 000 MAD", "Évite une rupture de stock"),
+    "label": string,
     "confidence": "low" | "medium" | "high"
   }
 }
-
-Schémas pour "action_payload" selon "action_type" :
-1. Pour "restock_order" :
-   {
-     "product_id": int (l'ID du produit Odoo à commander),
-     "quantity": int (la quantité à commander)
-   }
-2. Pour "send_email_campaign" :
-   {
-     "partner_ids": list[int] (les IDs des partenaires Odoo ciblés),
-     "template_id": null
-   }
-3. Pour "create_crm_activity" :
-   {
-     "partner_id": int (l'ID du partenaire Odoo),
-     "assigned_user_id": null,
-     "activity_type": "Todo",
-     "note": string (description ou instructions pour l'activité CRM)
-   }
-4. Pour "none" :
-   {}
-
-Règles strictes :
-- N'invente JAMAIS un product_id, partner_id ou quantité qui n'apparaît pas dans les données fournies.
-- Si aucune action fiable n'est déductible des données, utilise action_type="none".
-- Si les données fournies ne permettent pas d'identifier un ID réel pour l'action, mets obligatoirement action_type="none".
-- estimated_impact doit rester qualitatif si les données ne permettent pas un calcul précis.
 """
 
 
-def generate_recommendations(db: Session, alerts: list[Alert]) -> None:
-    """
-    Parcourt les alertes actives et genere une recommandation IA pour chaque alerte si elle n'existe pas deja.
-    """
-    for alert in alerts:
-        # Verifier si une recommandation existe deja pour cette source
-        source_id = alert.id
-        if alert.kpi_id == "health_score":
-            source_type = RecommendationSource.health_score
-        elif alert.is_anomaly:
-            source_type = RecommendationSource.anomaly
+def _get_allowed_actions_for_domain(domain: str) -> list[str]:
+    """Accès direct au dictionnaire des garde-fous."""
+    return ALLOWED_ACTIONS_PER_DOMAIN.get(domain, ["none"])
+
+
+def _compute_priority_score(item: dict) -> float:
+    """Calcul unifié de la priorité financière (MAD à risque) cross-domaine."""
+    domain = item.get("domain", "global_trend")
+    data = item.get("data", {})
+    alert = item.get("alert")
+    severity = alert.severity if alert else "warning"
+    severity_mult = 1.5 if severity == "critical" else 1.0
+
+    if domain == "stock":
+        qty = data.get("qty_available", 0)
+        price = data.get("lst_price", 0.0) or 0.0
+        if qty <= 0:
+            return (10000.0 + (10.0 * price)) * severity_mult
         else:
-            source_type = RecommendationSource.kpi_alert
+            return ((10.0 - qty) * price) * severity_mult
+    elif domain in ("revenue", "customer"):
+        kpi_val = data.get("kpi_value") if isinstance(data, dict) else None
+        if kpi_val and isinstance(kpi_val, (int, float)) and kpi_val > 0:
+            return float(kpi_val) * severity_mult
+        base_val = 15000.0 if severity == "critical" else 5000.0
+        return base_val * severity_mult
+    elif domain == "crm":
+        kpi_val = data.get("kpi_value") if isinstance(data, dict) else None
+        if kpi_val and isinstance(kpi_val, (int, float)) and kpi_val > 0:
+            return float(kpi_val) * severity_mult
+        base_val = 10000.0 if severity == "critical" else 3000.0
+        return base_val * severity_mult
+    else:
+        base_val = 5000.0 if severity == "critical" else 1000.0
+        return base_val * severity_mult
 
-        existing = db.query(AIRecommendation).filter(
-            AIRecommendation.source_id == source_id,
-            AIRecommendation.source_type == source_type,
-            AIRecommendation.status == RecommendationStatus.pending
-        ).first()
 
-        if existing:
-            continue
+def generate_recommendations(
+    db: Session,
+    alerts: list[Alert],
+    tenant_id: uuid.UUID = DEFAULT_TENANT_ID
+) -> None:
+    """Génère les recommandations IA dynamiques avec tri cross-domaine unifié."""
+    active_source_ids = set()
+    all_anomalies = []
 
-        # Charger le contexte Odoo selon l'alerte
-        odoo_context = ""
-        suggested_action_type = "none"
-
-        try:
-            if "stock" in alert.kpi_id or "stock" in alert.message.lower():
-                # Alerte de stock -> recuperer les produits en stock bas
+    # 1. Collecte des anomalies de tous les domaines
+    for alert in alerts:
+        if "stock" in alert.kpi_id or "stock" in alert.message.lower():
+            try:
                 products = odoo.search_read(
                     "product.product",
                     [["qty_available", "<", 10], ["type", "=", "product"]],
-                    ["id", "name", "qty_available"],
-                    limit=5
+                    ["id", "name", "qty_available", "lst_price"],
                 )
-                odoo_context = f"Produits Odoo en stock bas disponibles pour reapprovisionnement :\n{products}"
-                suggested_action_type = "restock_order"
+                for p in products:
+                    all_anomalies.append({
+                        "source_id": f"stock_product_{p['id']}",
+                        "source_type": RecommendationSource.anomaly if alert.is_anomaly else RecommendationSource.kpi_alert,
+                        "domain": "stock",
+                        "data": p,
+                        "alert": alert
+                    })
+            except Exception as e:
+                logger.error(f"Erreur lors de la lecture du stock Odoo: {e}")
+        else:
+            domain = "global_trend"
+            if "customer" in alert.kpi_id or "revenue" in alert.kpi_id:
+                domain = "customer"
+            elif "lead" in alert.kpi_id or "crm" in alert.kpi_id:
+                domain = "crm"
 
-            elif "customer" in alert.kpi_id or "revenue" in alert.kpi_id or "order" in alert.kpi_id:
-                # Alerte commerciale/client -> recuperer des partenaires avec e-mail
-                partners = odoo.search_read(
-                    "res.partner",
-                    [["email", "!=", False]],
-                    ["id", "name", "email"],
-                    limit=5
-                )
-                odoo_context = f"Partenaires/Clients Odoo avec e-mail disponibles pour campagne de relance :\n{partners}"
-                suggested_action_type = "send_email_campaign"
+            all_anomalies.append({
+                "source_id": f"anomaly_{alert.id}",
+                "source_type": RecommendationSource.anomaly if alert.is_anomaly else RecommendationSource.kpi_alert,
+                "domain": domain,
+                "data": alert.source_data.model_dump() if alert.source_data else {},
+                "alert": alert
+            })
 
-            elif "lead" in alert.kpi_id or "conversion" in alert.kpi_id or "pipeline" in alert.kpi_id:
-                # Alerte CRM -> recuperer les opportunites ou partenaires actifs
-                partners = odoo.search_read(
-                    "res.partner",
-                    [],
-                    ["id", "name"],
-                    limit=5
-                )
-                odoo_context = f"Partenaires/Clients Odoo pour lesquels creer une activite CRM de suivi :\n{partners}"
-                suggested_action_type = "create_crm_activity"
-        except Exception as e:
-            logger.error(f"Impossible de recuperer le contexte Odoo pour l'alerte {alert.id}: {e}")
+    # 2. Calcul du score de priorité unifié cross-domaine
+    for item in all_anomalies:
+        item["priority_score"] = _compute_priority_score(item)
 
-        # Construire le prompt pour l'appel LLM
-        user_prompt = f"""Genere une recommandation actionnable pour l'alerte suivante :
-Message d'alerte : "{alert.message}"
-KPI concerne : "{alert.kpi_id}"
-Severite : "{alert.severity}"
+    # 3. Tri unifié par score de priorité décroissant
+    all_anomalies_sorted = sorted(all_anomalies, key=lambda x: x["priority_score"], reverse=True)
 
-Contexte de donnees reelles provenant d'Odoo :
-{odoo_context}
+    # 4. Plafond à 12 cartes individuelles + Résumé overflow
+    if len(all_anomalies_sorted) > MAX_INDIVIDUAL_RECOMMENDATIONS:
+        individual_to_process = all_anomalies_sorted[:MAX_INDIVIDUAL_RECOMMENDATIONS]
+        overflow_items = all_anomalies_sorted[MAX_INDIVIDUAL_RECOMMENDATIONS:]
+        
+        for item in individual_to_process:
+            active_source_ids.add(item["source_id"])
 
-Recommandation pour le type d'action attendu : "{suggested_action_type}".
-Rappel : renvoie uniquement le JSON strict sans aucun autre texte autour.
+        overflow_source_id = "summary_overflow_anomalies"
+        active_source_ids.add(overflow_source_id)
+        _process_overflow_summary(db, tenant_id, overflow_source_id, len(overflow_items), overflow_items)
+    else:
+        individual_to_process = all_anomalies_sorted
+        for item in individual_to_process:
+            active_source_ids.add(item["source_id"])
+
+    # 5. Traitement des recommandations individuelles
+    for item in individual_to_process:
+        source_id = item["source_id"]
+        source_type = item["source_type"]
+        domain = item["domain"]
+        allowed_actions = _get_allowed_actions_for_domain(domain)
+
+        _process_single_recommendation(
+            db=db,
+            tenant_id=tenant_id,
+            source_id=source_id,
+            source_type=source_type,
+            domain=domain,
+            item_data=item,
+            allowed_actions=allowed_actions
+        )
+
+    # 6. Expiration des anomalies résolues ou basculées
+    _expire_obsolete_recommendations(db, tenant_id, active_source_ids)
+
+
+def _process_single_recommendation(
+    db: Session,
+    tenant_id: uuid.UUID,
+    source_id: str,
+    source_type: RecommendationSource,
+    domain: str,
+    item_data: dict,
+    allowed_actions: list[str]
+):
+    existing = db.query(AIRecommendation).filter(
+        AIRecommendation.tenant_id == tenant_id,
+        AIRecommendation.source_type == source_type,
+        AIRecommendation.source_id == source_id,
+        AIRecommendation.status == RecommendationStatus.pending
+    ).first()
+
+    prompt_allowed = ", ".join([f'"{a}"' for a in allowed_actions])
+    user_prompt = f"""Génère une recommandation pour l'anomalie suivante :
+Données : {item_data.get('data')}
+Domaine : {domain}
+Message d'alerte : {item_data['alert'].message}
+
+GARDE-FOU STRICT : Tu dois OBLIGATOIREMENT choisir action_type uniquement parmi cette liste : [{prompt_allowed}].
+Toute autre valeur est strictement interdite.
+Rappel : réponds UNIQUEMENT sous la forme d'un objet JSON valide et strict.
 """
 
-        try:
-            completion = _client.chat.completions.create(
-                model=settings.groq_model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.2,
-                max_tokens=600,
-                response_format={"type": "json_object"}  # Force le mode JSON strict
+    try:
+        completion = _client.chat.completions.create(
+            model=settings.groq_model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.2,
+            max_tokens=600,
+            response_format={"type": "json_object"}
+        )
+
+        response_text = completion.choices[0].message.content
+        data = json.loads(response_text)
+
+        # Fallback neutre pour estimated_impact
+        impact_raw = data.get("estimated_impact", {})
+        if isinstance(impact_raw, str):
+            estimated_impact = {"label": impact_raw, "confidence": "medium"}
+        else:
+            estimated_impact = {
+                "label": impact_raw.get("label", "Impact non estimé"),
+                "confidence": impact_raw.get("confidence", "medium")
+            }
+
+        parsed_action_type = data.get("action_type", "none")
+        if parsed_action_type not in allowed_actions:
+            logger.warning(
+                f"Action '{parsed_action_type}' non autorisée pour le domaine '{domain}'. Fallback sur 'none'."
             )
+            parsed_action_type = "none"
 
-            response_text = completion.choices[0].message.content
-            logger.info(f"Reponse brute LLM Recommandation : {response_text}")
+        try:
+            action_enum = RecommendationAction(parsed_action_type)
+        except ValueError:
+            action_enum = RecommendationAction.none
 
-            data = json.loads(response_text)
-
-            # Extraire et valider l'impact estimé
-            impact_raw = data.get("estimated_impact", {})
-            if isinstance(impact_raw, str):
-                estimated_impact = {"label": impact_raw, "confidence": "medium"}
-            else:
-                estimated_impact = {
-                    "label": impact_raw.get("label", "Impact positif attendu"),
-                    "confidence": impact_raw.get("confidence", "medium")
-                }
-
-            # Valider le type d'action par rapport à l'Enum
-            action_type_str = data.get("action_type", "none")
-            try:
-                action_type = RecommendationAction(action_type_str)
-            except ValueError:
-                action_type = RecommendationAction.none
-
-            # Creer la recommandation en DB
+        if existing:
+            existing.title = data.get("title", existing.title)
+            existing.explanation = data.get("explanation", existing.explanation)
+            existing.action_type = action_enum
+            existing.action_payload = data.get("action_payload", {})
+            existing.estimated_impact = estimated_impact
+            existing.expires_at = datetime.utcnow() + timedelta(days=7)
+            db.commit()
+            logger.info(f"Recommandation mise à jour en place pour source_id={source_id}")
+        else:
             new_rec = AIRecommendation(
                 id=uuid.uuid4(),
-                tenant_id=DEFAULT_TENANT_ID,
+                tenant_id=tenant_id,
                 source_type=source_type,
                 source_id=source_id,
-                title=data.get("title", f"Action pour {alert.kpi_id}"),
-                explanation=data.get("explanation", alert.message),
-                action_type=action_type,
+                title=data.get("title", f"Action pour {source_id}"),
+                explanation=data.get("explanation", item_data['alert'].message),
+                action_type=action_enum,
                 action_payload=data.get("action_payload", {}),
                 estimated_impact=estimated_impact,
                 status=RecommendationStatus.pending,
                 created_at=datetime.utcnow(),
                 expires_at=datetime.utcnow() + timedelta(days=7)
             )
-
             db.add(new_rec)
             db.commit()
-            logger.info(f"Recommandation IA creee avec succes pour la source {source_id} : '{new_rec.title}'")
+            logger.info(f"Recommandation créée avec succès pour source_id={source_id}")
 
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Erreur lors de la generation de recommandation pour l'alerte {alert.id}: {e}")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Erreur lors de la génération de recommandation pour source_id={source_id}: {e}")
+
+
+def _process_overflow_summary(
+    db: Session,
+    tenant_id: uuid.UUID,
+    overflow_source_id: str,
+    overflow_count: int,
+    overflow_items: list[dict]
+):
+    item_descriptions = []
+    for item in overflow_items:
+        data = item.get("data", {})
+        if item.get("domain") == "stock":
+            item_descriptions.append(f"{data.get('name', 'Produit')} (Stock: {data.get('qty_available', 0)})")
+        else:
+            item_descriptions.append(item.get("source_id", "Anomalie"))
+
+    details_str = ", ".join(item_descriptions[:10])
+    if len(item_descriptions) > 10:
+        details_str += f", et {len(item_descriptions) - 10} autres..."
+
+    title = f"{overflow_count} autres anomalies secondaires à surveiller"
+    explanation = (
+        f"{overflow_count} anomalies supplémentaires sont actives au-delà des "
+        f"{MAX_INDIVIDUAL_RECOMMENDATIONS} alertes prioritaires. Éléments inclus : {details_str}."
+    )
+
+    existing = db.query(AIRecommendation).filter(
+        AIRecommendation.tenant_id == tenant_id,
+        AIRecommendation.source_type == RecommendationSource.anomaly,
+        AIRecommendation.source_id == overflow_source_id,
+        AIRecommendation.status == RecommendationStatus.pending
+    ).first()
+
+    estimated_impact = {"label": f"{overflow_count} anomalies en attente", "confidence": "medium"}
+
+    if existing:
+        existing.title = title
+        existing.explanation = explanation
+        existing.action_type = RecommendationAction.none
+        existing.action_payload = {"overflow_count": overflow_count, "items": item_descriptions}
+        existing.estimated_impact = estimated_impact
+        existing.expires_at = datetime.utcnow() + timedelta(days=7)
+        db.commit()
+    else:
+        new_rec = AIRecommendation(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            source_type=RecommendationSource.anomaly,
+            source_id=overflow_source_id,
+            title=title,
+            explanation=explanation,
+            action_type=RecommendationAction.none,
+            action_payload={"overflow_count": overflow_count, "items": item_descriptions},
+            estimated_impact=estimated_impact,
+            status=RecommendationStatus.pending,
+            created_at=datetime.utcnow(),
+            expires_at=datetime.utcnow() + timedelta(days=7)
+        )
+        db.add(new_rec)
+        db.commit()
+
+
+def _expire_obsolete_recommendations(db: Session, tenant_id: uuid.UUID, active_source_ids: set[str]):
+    pending_recs = db.query(AIRecommendation).filter(
+        AIRecommendation.tenant_id == tenant_id,
+        AIRecommendation.status == RecommendationStatus.pending
+    ).all()
+
+    for rec in pending_recs:
+        if rec.source_id not in active_source_ids:
+            rec.status = RecommendationStatus.expired
+            logger.info(
+                f"Recommandation pending '{rec.source_id}' expirée "
+                f"(anomalie résolue ou basculée dans l'overflow suite au réordonnancement par priorité)."
+            )
+    db.commit()

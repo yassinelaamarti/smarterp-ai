@@ -1,7 +1,7 @@
 import uuid
 import enum
 from datetime import datetime
-from sqlalchemy import Column, String, JSON, DateTime, ForeignKey, Text, Boolean, Enum, UUID, Integer
+from sqlalchemy import Column, String, JSON, DateTime, ForeignKey, Text, Boolean, Enum, UUID, Integer, Index
 from app.database import Base
 
 
@@ -23,12 +23,23 @@ class RecommendationStatus(str, enum.Enum):
     executed = "executed"
     dismissed = "dismissed"
     failed = "failed"
+    expired = "expired"
 
 
 class AIRecommendation(Base):
     """Représente une recommandation IA actionnable par l'utilisateur."""
 
     __tablename__ = "ai_recommendation"
+    __table_args__ = (
+        Index(
+            "uq_pending_recommendation_per_anomaly",
+            "tenant_id",
+            "source_type",
+            "source_id",
+            unique=True,
+            postgresql_where=(Column("status") == RecommendationStatus.pending)
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
