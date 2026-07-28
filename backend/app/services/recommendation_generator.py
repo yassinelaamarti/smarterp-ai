@@ -1,81 +1,376 @@
-import json
 import logging
+import json
 import uuid
+import time
 from datetime import datetime, timedelta
+from typing import Optional
 from sqlalchemy.orm import Session
+from app.config import settings
+from app.database import SessionLocal
+from app.services.stock_service import fetch_critical_stock_products
 from app.models.ai_recommendation import AIRecommendation, RecommendationSource, RecommendationAction, RecommendationStatus
+from app.models.alert_setting import AlertSetting
 from app.schemas.alert import Alert
 from app.services.odoo_connector import odoo
-from app.config import settings
 from groq import Groq
 
 logger = logging.getLogger(__name__)
+
 _client = Groq(api_key=settings.groq_api_key)
 
 DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
 MAX_INDIVIDUAL_RECOMMENDATIONS = 12
 
-ALLOWED_ACTIONS_PER_DOMAIN = {
-    "stock": ["restock_order", "none"],
-    "customer": ["send_email_campaign", "none"],
-    "revenue": ["send_email_campaign", "none"],
-    "crm": ["create_crm_activity", "none"],
-    "global_trend": ["none"],
-}
+# Indicateur global pour bascule proactive si le quota TPD quotidien Groq est épuisé
+_groq_quota_exhausted = False
 
-SYSTEM_PROMPT = """Tu es un module d'aide à la décision pour un dirigeant PME.
-On te donne un signal détecté (anomalie, alerte) avec ses données réelles provenant d'Odoo.
-Tu dois répondre UNIQUEMENT sous la forme d'un objet JSON valide et strict, sans aucun autre texte ou mise en forme.
+SYSTEM_BATCH_PROMPT = """Tu es l'assistant IA décisionnel de SmartERP AI pour dirigeants de PME.
+Ta mission est d'analyser les anomalies d'entreprise (stock, ventes, trésorerie, CRM) et de générer pour CHAQUE entité fournie une recommandation d'action ultra-pertinente, concrète et quantifiée.
 
-Structure JSON attendue :
+RÈGLES D'ACTION STRICTES SELON LE DOMAINE :
+1. Domaine "stock" (rupture, stock bas) :
+   - Tu peux proposer action_type = "restock_order"
+   - Le champ action_payload DOIT contenir "product_id" (entier) et "quantity" (entier suggéré pour réapprovisionner).
+2. Domaine "customer_inactive" (baisse de CA, attrition client) :
+   - Tu peux proposer action_type = "send_email_campaign"
+   - Le champ action_payload DOIT contenir "segment_id" ou "customer_ids" et "template".
+3. Domaine "crm" (opportunités stagnantes, pipeline en baisse) :
+   - Tu peux proposer action_type = "create_crm_activity"
+   - Le champ action_payload DOIT contenir "lead_id" et "summary".
+4. Si aucune action automatique n'est possible :
+   - Tu DOIS retourner action_type = "none" et action_payload = {}.
+
+FORMAT JSON ATTENDU (STRICT) :
 {
-  "title": string (max 80 caractères, orienté action),
-  "explanation": string (2-3 phrases, business-friendly),
-  "action_type": string (doit correspondre STRICTEMENT à l'une des valeurs autorisées fournies),
-  "action_payload": object,
-  "estimated_impact": {
-    "label": string,
-    "confidence": "low" | "medium" | "high"
-  }
+  "recommendations": [
+    {
+      "entity_key": "identifiant_exact_de_lentite",
+      "title": "Titre court et percutant de l'action",
+      "explanation": "Explication claire de la cause et du risque si rien n'est fait",
+      "action_type": "restock_order | send_email_campaign | create_crm_activity | none",
+      "action_payload": {},
+      "estimated_impact": {"label": "+15 000 MAD de CA préservé", "confidence": "high | medium | low"}
+    }
+  ]
 }
 """
 
+ALLOWED_ACTIONS_PER_DOMAIN = {
+    "stock": ["restock_order", "none"],
+    "customer": ["send_email_campaign", "none"],
+    "customer_inactive": ["send_email_campaign", "none"],
+    "crm": ["create_crm_activity", "none"],
+}
+
+# Mapping explicite et exhaustif des KPIs vers leurs domaines métiers respectifs
+KPI_TO_DOMAIN = {
+    # Performance Commerciale & CA
+    "revenue": "revenue_trend",
+    "new_orders": "revenue_trend",
+    "avg_order_value": "revenue_trend",
+
+    # Stock Agrégé (anomalies globales sans entité produit physique)
+    "stock_alerts": "global_trend",
+    "stock_value": "global_trend",
+
+    # CRM & Portefeuille Client
+    "new_leads": "crm",
+    "conversion_rate": "crm",
+    "pipeline_value": "crm",
+    "active_customers": "crm",
+
+    # Opérations & Logistique
+    "late_orders": "global_trend",
+}
+
+# Libellés lisibles des KPIs pour les fallbacks non-stock
+KPI_LABELS = {
+    "revenue": "Chiffre d'affaires",
+    "new_orders": "Nouvelles commandes",
+    "avg_order_value": "Panier moyen",
+    "stock_alerts": "Alertes stock bas",
+    "stock_value": "Valorisation du stock",
+    "new_leads": "Nouveaux leads CRM",
+    "conversion_rate": "Taux de conversion CRM",
+    "pipeline_value": "Pipeline CRM",
+    "active_customers": "Clients actifs",
+    "late_orders": "Commandes en retard",
+}
+
 
 def _get_allowed_actions_for_domain(domain: str) -> list[str]:
-    """Accès direct au dictionnaire des garde-fous."""
     return ALLOWED_ACTIONS_PER_DOMAIN.get(domain, ["none"])
 
 
-def _compute_priority_score(item: dict) -> float:
-    """Calcul unifié de la priorité financière (MAD à risque) cross-domaine."""
-    domain = item.get("domain", "global_trend")
-    data = item.get("data", {})
-    alert = item.get("alert")
-    severity = alert.severity if alert else "warning"
-    severity_mult = 1.5 if severity == "critical" else 1.0
+def _resolve_domain_from_entity_key(entity_key: str, data: dict = None, alert: Alert = None) -> str:
+    """Détermine le domaine métier de manière déterministe par entité concrète ou mapping explicite de KPI."""
+    # Règle 1 : Entités physiques concrètes identifiées (IDs dans les données ou préfixes d'entités)
+    if entity_key.startswith("product_") or (data and ("qty_available" in data or "product_id" in data)):
+        return "stock"
+    if entity_key.startswith("partner_") or (data and ("customer_id" in data or "partner_id" in data)):
+        return "customer_inactive"
+    if entity_key.startswith("lead_") or (data and ("lead_id" in data or "opportunity_id" in data)):
+        return "crm"
 
+    # Règle 2 : Extraction et dictionnaire de correspondance exacte KPI_TO_DOMAIN
+    clean_kpi_id = None
+    if alert and hasattr(alert, "kpi_id") and alert.kpi_id:
+        clean_kpi_id = alert.kpi_id
+    elif data and "kpi_id" in data:
+        clean_kpi_id = data["kpi_id"]
+    else:
+        clean_kpi_id = entity_key.replace("anomaly_", "", 1) if entity_key.startswith("anomaly_") else entity_key
+        for suffix in ["_drop", "_increase", "_alerts", "_critical", "_warning"]:
+            if clean_kpi_id.endswith(suffix) and clean_kpi_id not in KPI_TO_DOMAIN:
+                clean_kpi_id = clean_kpi_id[:-len(suffix)]
+
+    if clean_kpi_id in KPI_TO_DOMAIN:
+        return KPI_TO_DOMAIN[clean_kpi_id]
+
+    logger.warning(
+        f"Avertissement : kpi_id ou entity_key inconnu '{entity_key}' (clean_kpi_id: '{clean_kpi_id}'). "
+        f"Fallback sur domain 'global_trend'."
+    )
+    return "global_trend"
+
+
+
+
+def _compute_priority_score(entity_item: dict) -> float:
+    """Calcule le score de priorité unifié intégrant l'impact financier réel."""
+    score = 50.0
+
+    causes = entity_item.get("causes", [entity_item])
+    for c in causes:
+        alert = c.get("alert")
+        if alert:
+            if alert.severity == "critical":
+                score += 40.0
+            elif alert.severity == "warning":
+                score += 20.0
+            if alert.is_anomaly:
+                score += 10.0
+
+    domain = entity_item.get("domain") or _resolve_domain_from_entity_key(entity_item.get("entity_key", ""))
+    if domain == "stock":
+        score += 15.0
+    elif domain in ("customer", "customer_inactive", "crm"):
+        score += 10.0
+
+    data = entity_item.get("data", {})
+    financial_impact = 0.0
     if domain == "stock":
         qty = data.get("qty_available", 0)
-        price = data.get("lst_price", 0.0) or 0.0
-        if qty <= 0:
-            return (10000.0 + (10.0 * price)) * severity_mult
-        else:
-            return ((10.0 - qty) * price) * severity_mult
-    elif domain in ("revenue", "customer"):
-        kpi_val = data.get("kpi_value") if isinstance(data, dict) else None
-        if kpi_val and isinstance(kpi_val, (int, float)) and kpi_val > 0:
-            return float(kpi_val) * severity_mult
-        base_val = 15000.0 if severity == "critical" else 5000.0
-        return base_val * severity_mult
-    elif domain == "crm":
-        kpi_val = data.get("kpi_value") if isinstance(data, dict) else None
-        if kpi_val and isinstance(kpi_val, (int, float)) and kpi_val > 0:
-            return float(kpi_val) * severity_mult
-        base_val = 10000.0 if severity == "critical" else 3000.0
-        return base_val * severity_mult
+        price = data.get("lst_price", 100.0)
+        qty_gap = max(0, 10 - qty)
+        financial_impact = qty_gap * price
+    elif domain in ("customer", "customer_inactive", "crm", "revenue_trend", "global_trend"):
+        financial_impact = abs(data.get("amount", data.get("value", data.get("revenue_loss", 0.0))))
+
+    score += min(financial_impact / 100.0, 50.0)
+    return round(score, 2)
+
+
+def _entity_needs_llm(db: Session, tenant_id: uuid.UUID, entity_item: dict) -> bool:
+    """Vérifie si une entité a réellement besoin d'un appel LLM (nouvelle ou données modifiées de > 15%)."""
+    entity_key = entity_item["entity_key"]
+    existing = db.query(AIRecommendation).filter(
+        AIRecommendation.tenant_id == tenant_id,
+        AIRecommendation.entity_key == entity_key,
+        AIRecommendation.status.in_([RecommendationStatus.pending, RecommendationStatus.acknowledged])
+    ).first()
+
+    if not existing:
+        return True
+
+    # Si c'était un fallback générique indisponible, réessayer
+    if existing.title.startswith("Analyse IA temporairement indisponible"):
+        return True
+
+    domain = entity_item["domain"]
+    data = entity_item.get("data", {})
+
+    if domain == "stock":
+        old_qty = existing.action_payload.get("quantity")
+        new_qty = data.get("qty_available", 0)
+        if old_qty is None:
+            return True
+        if abs(new_qty - old_qty) >= max(2, old_qty * 0.15):
+            return True
+        return False
+    elif domain in ("customer", "customer_inactive", "crm", "revenue_trend", "global_trend"):
+        old_val = existing.action_payload.get("value", 0)
+        new_val = data.get("amount", data.get("value", 0))
+        if old_val == 0 or abs(new_val - old_val) / max(abs(old_val), 1.0) >= 0.15:
+            return True
+        return False
+
+    return False
+
+
+def _generate_fallback_data(db: Session, entity_item: dict) -> dict:
+    """Génère un fallback intelligent (Option 1 pour le stock concrétisé, Option 2 avec libellé KPI pour le non-stock)."""
+    entity_key = entity_item["entity_key"]
+    domain = entity_item["domain"]
+    data = entity_item.get("data", {})
+
+    causes = entity_item.get("causes", [entity_item])
+    first_alert = causes[0].get("alert") if causes else None
+
+    clean_kpi_id = None
+    if first_alert and hasattr(first_alert, "kpi_id") and first_alert.kpi_id:
+        clean_kpi_id = first_alert.kpi_id
+    elif "kpi_id" in data:
+        clean_kpi_id = data["kpi_id"]
     else:
-        base_val = 5000.0 if severity == "critical" else 1000.0
-        return base_val * severity_mult
+        clean_kpi_id = entity_key.replace("anomaly_", "", 1) if entity_key.startswith("anomaly_") else entity_key
+        for suffix in ["_drop", "_increase", "_alerts", "_critical", "_warning"]:
+            if clean_kpi_id.endswith(suffix) and clean_kpi_id not in KPI_LABELS:
+                clean_kpi_id = clean_kpi_id[:-len(suffix)]
+
+    kpi_label = KPI_LABELS.get(clean_kpi_id, "Anomalie")
+
+
+
+    if domain == "stock":
+        critical_setting = db.query(AlertSetting).filter(AlertSetting.key == "stock_critical").first()
+        critical_threshold = critical_setting.value if critical_setting else 10.0
+
+        qty_available = data.get("qty_available", 0)
+        product_id = data.get("id")
+        product_name = data.get("name", entity_key)
+        lst_price = data.get("lst_price", 100.0)
+
+        suggested_qty = max(int(critical_threshold - qty_available + 5), 5)
+        estimated_impact_value = suggested_qty * lst_price
+
+        return {
+            "title": f"Réapprovisionner {product_name}",
+            "explanation": (
+                f"Stock critique détecté ({int(qty_available)} unité(s) disponible(s), seuil fixé à {int(critical_threshold)}). "
+                f"Quantité suggérée automatiquement en l'absence d'analyse IA détaillée — à ajuster si besoin avant validation."
+            ),
+            "action_type": "restock_order",
+            "action_payload": {"product_id": product_id, "quantity": suggested_qty},
+            "estimated_impact": {"label": f"+{int(estimated_impact_value):,} MAD préservé", "confidence": "medium"}
+        }
+    else:
+        return {
+            "title": f"Analyse IA temporairement indisponible — {kpi_label}",
+            "explanation": "Le service d'analyse est momentanément surchargé. Cette anomalie reste surveillée et sera réanalysée automatiquement au prochain cycle.",
+            "action_type": "none",
+            "action_payload": {},
+            "estimated_impact": {"label": "Impact non estimé", "confidence": "low"}
+        }
+
+
+def _execute_batch_llm_call(entities_batch: list[dict], db: Session) -> dict[str, dict]:
+    """Exécute un SEUL appel API LLM en mode batch pour toutes les entités du lot avec retries et fallback."""
+    global _groq_quota_exhausted
+
+    results = {}
+    if not entities_batch:
+        return results
+
+    if _groq_quota_exhausted:
+        logger.warning("Quota TPD Groq épuisé. Basculement proactif immédiat en fallback calculé.")
+        for item in entities_batch:
+            results[item["entity_key"]] = _generate_fallback_data(db, item)
+        return results
+
+    entities_descriptions = []
+    for item in entities_batch:
+        ekey = item["entity_key"]
+        domain = item["domain"]
+        data = item.get("data", {})
+        allowed_actions = _get_allowed_actions_for_domain(domain)
+        causes = item.get("causes", [])
+
+        alert_msgs = []
+        for c in causes:
+            a = c.get("alert")
+            if a:
+                if c.get("source_type") == RecommendationSource.anomaly:
+                    alert_msgs.append(f"Anomalie Z-Score: {a.message}")
+                else:
+                    alert_msgs.append(f"Alerte Seuil: {a.message}")
+        causes_text = " | ".join(alert_msgs) if alert_msgs else "Alerte détectée"
+
+        desc = (
+            f"- Entité: {ekey}\n"
+            f"  Domain: {domain}\n"
+            f"  Données: {data}\n"
+            f"  Causes: {causes_text}\n"
+            f"  Allowed_actions: {allowed_actions}"
+        )
+        entities_descriptions.append(desc)
+
+    user_batch_prompt = (
+        f"Génère une recommandation pour CHAQUE entité ci-dessous ({len(entities_batch)} entités) :\n\n"
+        + "\n\n".join(entities_descriptions)
+        + "\n\nRéponds UNIQUEMENT sous la forme d'un objet JSON respectant le format requis."
+    )
+
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            logger.info(f"Envoi d'un appel LLM BATCH pour {len(entities_batch)} entités (Tentative {attempt + 1})...")
+            completion = _client.chat.completions.create(
+                model=settings.groq_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_BATCH_PROMPT},
+                    {"role": "user", "content": user_batch_prompt}
+                ],
+                temperature=0.2,
+                max_tokens=1500,
+                response_format={"type": "json_object"}
+            )
+
+            response_text = completion.choices[0].message.content
+            parsed = json.loads(response_text)
+
+            rec_list = parsed.get("recommendations", [])
+            if not rec_list and isinstance(parsed, dict):
+                if "entity_key" in parsed:
+                    rec_list = [parsed]
+                elif "title" in parsed:
+                    rec_list = []
+                    for item in entities_batch:
+                        item_rec = dict(parsed)
+                        item_rec["entity_key"] = item["entity_key"]
+                        rec_list.append(item_rec)
+
+            for rec_data in rec_list:
+                ekey = rec_data.get("entity_key")
+                if ekey:
+                    results[ekey] = rec_data
+
+            for item in entities_batch:
+                ekey = item["entity_key"]
+                if ekey not in results:
+                    logger.warning(f"Entité {ekey} absente de la réponse batch LLM. Utilisation du fallback.")
+                    results[ekey] = _generate_fallback_data(db, item)
+
+            return results
+
+        except Exception as err:
+            err_msg = str(err)
+            logger.warning(f"Erreur lors de l'appel LLM Batch (Tentative {attempt + 1}/{max_retries + 1}): {err_msg}")
+
+            if "Limit 100000" in err_msg or "tokens per day" in err_msg or "TPD" in err_msg:
+                logger.error("Quota journalier Groq (100k TPD) totalement atteint. Activation du fallback proactif.")
+                _groq_quota_exhausted = True
+                break
+
+            if attempt < max_retries:
+                sleep_time = (attempt + 1) * 2
+                logger.info(f"Pause de {sleep_time}s avant retry (Backoff exponentiel)...")
+                time.sleep(sleep_time)
+
+    for item in entities_batch:
+        results[item["entity_key"]] = _generate_fallback_data(db, item)
+
+    return results
 
 
 def generate_recommendations(
@@ -83,22 +378,19 @@ def generate_recommendations(
     alerts: list[Alert],
     tenant_id: uuid.UUID = DEFAULT_TENANT_ID
 ) -> None:
-    """Génère les recommandations IA dynamiques avec tri cross-domaine unifié."""
-    active_source_ids = set()
+    """Génère les recommandations IA dynamiques en mode BATCH optimisé."""
+    active_entity_keys = set()
     all_anomalies = []
 
     # 1. Collecte des anomalies de tous les domaines
     for alert in alerts:
         if "stock" in alert.kpi_id or "stock" in alert.message.lower():
             try:
-                products = odoo.search_read(
-                    "product.product",
-                    [["qty_available", "<", 10], ["type", "=", "product"]],
-                    ["id", "name", "qty_available", "lst_price"],
-                )
+                products = fetch_critical_stock_products(db=db, odoo_client=odoo)
                 for p in products:
                     all_anomalies.append({
                         "source_id": f"stock_product_{p['id']}",
+                        "entity_key": f"product_{p['id']}",
                         "source_type": RecommendationSource.anomaly if alert.is_anomaly else RecommendationSource.kpi_alert,
                         "domain": "stock",
                         "data": p,
@@ -107,159 +399,190 @@ def generate_recommendations(
             except Exception as e:
                 logger.error(f"Erreur lors de la lecture du stock Odoo: {e}")
         else:
-            domain = "global_trend"
-            if "customer" in alert.kpi_id or "revenue" in alert.kpi_id:
-                domain = "customer"
-            elif "lead" in alert.kpi_id or "crm" in alert.kpi_id:
-                domain = "crm"
+            domain = _resolve_domain_from_entity_key(f"anomaly_{alert.id}")
 
             all_anomalies.append({
                 "source_id": f"anomaly_{alert.id}",
+                "entity_key": f"anomaly_{alert.id}",
                 "source_type": RecommendationSource.anomaly if alert.is_anomaly else RecommendationSource.kpi_alert,
                 "domain": domain,
                 "data": alert.source_data.model_dump() if alert.source_data else {},
                 "alert": alert
             })
 
-    # 2. Calcul du score de priorité unifié cross-domaine
+    # 1.5 Fusion par entity_key et détermination déterministe du domaine
+    grouped_by_entity = {}
     for item in all_anomalies:
+        ekey = item["entity_key"]
+        resolved_domain = _resolve_domain_from_entity_key(ekey, item["data"])
+
+        if ekey not in grouped_by_entity:
+            grouped_by_entity[ekey] = {
+                "entity_key": ekey,
+                "source_id": item["source_id"],
+                "source_type": item["source_type"],
+                "domain": resolved_domain,
+                "data": item["data"],
+                "causes": [item]
+            }
+        else:
+            prev_domain = grouped_by_entity[ekey]["domain"]
+            if prev_domain != resolved_domain and prev_domain != "global_trend":
+                logger.warning(
+                    f"Avertissement : conflit potentiel de domaine pour {ekey} ({prev_domain} vs {resolved_domain}). "
+                    f"Domaine déterministe conservé : {resolved_domain}"
+                )
+            grouped_by_entity[ekey]["domain"] = resolved_domain
+            grouped_by_entity[ekey]["causes"].append(item)
+            if item["source_type"] == RecommendationSource.anomaly:
+                grouped_by_entity[ekey]["source_type"] = RecommendationSource.anomaly
+
+    unique_items = list(grouped_by_entity.values())
+
+    # 2. Calcul du score de priorité unifié cross-domaine avec impact financier
+    for item in unique_items:
         item["priority_score"] = _compute_priority_score(item)
 
     # 3. Tri unifié par score de priorité décroissant
-    all_anomalies_sorted = sorted(all_anomalies, key=lambda x: x["priority_score"], reverse=True)
+    all_anomalies_sorted = sorted(unique_items, key=lambda x: x["priority_score"], reverse=True)
 
     # 4. Plafond à 12 cartes individuelles + Résumé overflow
     if len(all_anomalies_sorted) > MAX_INDIVIDUAL_RECOMMENDATIONS:
         individual_to_process = all_anomalies_sorted[:MAX_INDIVIDUAL_RECOMMENDATIONS]
         overflow_items = all_anomalies_sorted[MAX_INDIVIDUAL_RECOMMENDATIONS:]
-        
+
         for item in individual_to_process:
-            active_source_ids.add(item["source_id"])
+            active_entity_keys.add(item["entity_key"])
 
         overflow_source_id = "summary_overflow_anomalies"
-        active_source_ids.add(overflow_source_id)
+        overflow_entity_key = overflow_source_id
+        active_entity_keys.add(overflow_entity_key)
         _process_overflow_summary(db, tenant_id, overflow_source_id, len(overflow_items), overflow_items)
     else:
         individual_to_process = all_anomalies_sorted
         for item in individual_to_process:
-            active_source_ids.add(item["source_id"])
+            active_entity_keys.add(item["entity_key"])
 
-    # 5. Traitement des recommandations individuelles
+    # 5. Filtrage des entités nécessitant un appel LLM (Cache / Inchangées)
+    entities_needing_llm = []
     for item in individual_to_process:
-        source_id = item["source_id"]
-        source_type = item["source_type"]
+        if _entity_needs_llm(db, tenant_id, item):
+            entities_needing_llm.append(item)
+        else:
+            logger.info(f"Entité {item['entity_key']} inchangée : réutilisation de la recommandation existante sans appel LLM.")
+
+    # 6. Exécution de l'appel BATCH LLM unique pour le lot nécessitant une mise à jour
+    batch_llm_results = {}
+    if entities_needing_llm:
+        batch_llm_results = _execute_batch_llm_call(entities_needing_llm, db)
+
+    # 7. Persistance en DB des recommandations individuelles
+    for item in individual_to_process:
+        ekey = item["entity_key"]
         domain = item["domain"]
         allowed_actions = _get_allowed_actions_for_domain(domain)
 
-        _process_single_recommendation(
+        rec_data = batch_llm_results.get(ekey)
+        if not rec_data:
+            existing = db.query(AIRecommendation).filter(
+                AIRecommendation.tenant_id == tenant_id,
+                AIRecommendation.entity_key == ekey,
+                AIRecommendation.status.in_([RecommendationStatus.pending, RecommendationStatus.acknowledged])
+            ).first()
+            if existing:
+                if existing.status == RecommendationStatus.acknowledged:
+                    existing.status = RecommendationStatus.pending
+                existing.expires_at = datetime.utcnow() + timedelta(days=7)
+                db.commit()
+                continue
+            else:
+                rec_data = _generate_fallback_data(db, item)
+
+        _save_single_recommendation(
             db=db,
             tenant_id=tenant_id,
-            source_id=source_id,
-            source_type=source_type,
+            source_id=item["source_id"],
+            entity_key=ekey,
+            source_type=item["source_type"],
             domain=domain,
-            item_data=item,
+            data_dict=rec_data,
             allowed_actions=allowed_actions
         )
 
-    # 6. Expiration des anomalies résolues ou basculées
-    _expire_obsolete_recommendations(db, tenant_id, active_source_ids)
+    # 8. Expiration des anomalies résolues ou basculées par entity_key
+    _expire_obsolete_recommendations(db, tenant_id, active_entity_keys)
 
 
-def _process_single_recommendation(
+def _save_single_recommendation(
     db: Session,
     tenant_id: uuid.UUID,
     source_id: str,
+    entity_key: str,
     source_type: RecommendationSource,
     domain: str,
-    item_data: dict,
+    data_dict: dict,
     allowed_actions: list[str]
 ):
     existing = db.query(AIRecommendation).filter(
         AIRecommendation.tenant_id == tenant_id,
-        AIRecommendation.source_type == source_type,
-        AIRecommendation.source_id == source_id,
-        AIRecommendation.status == RecommendationStatus.pending
+        AIRecommendation.entity_key == entity_key,
+        AIRecommendation.status.in_([RecommendationStatus.pending, RecommendationStatus.acknowledged])
     ).first()
 
-    prompt_allowed = ", ".join([f'"{a}"' for a in allowed_actions])
-    user_prompt = f"""Génère une recommandation pour l'anomalie suivante :
-Données : {item_data.get('data')}
-Domaine : {domain}
-Message d'alerte : {item_data['alert'].message}
+    impact_raw = data_dict.get("estimated_impact", {})
+    if isinstance(impact_raw, str):
+        estimated_impact = {"label": impact_raw, "confidence": "medium"}
+    else:
+        estimated_impact = {
+            "label": impact_raw.get("label", "Impact non estimé"),
+            "confidence": impact_raw.get("confidence", "medium")
+        }
 
-GARDE-FOU STRICT : Tu dois OBLIGATOIREMENT choisir action_type uniquement parmi cette liste : [{prompt_allowed}].
-Toute autre valeur est strictement interdite.
-Rappel : réponds UNIQUEMENT sous la forme d'un objet JSON valide et strict.
-"""
+    parsed_action_type = data_dict.get("action_type", "none")
+    if parsed_action_type not in allowed_actions:
+        logger.warning(f"Action '{parsed_action_type}' non autorisée pour le domaine '{domain}'. Fallback sur 'none'.")
+        parsed_action_type = "none"
 
     try:
-        completion = _client.chat.completions.create(
-            model=settings.groq_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.2,
-            max_tokens=600,
-            response_format={"type": "json_object"}
+        action_enum = RecommendationAction(parsed_action_type)
+    except ValueError:
+        action_enum = RecommendationAction.none
+
+    clean_kpi_id = entity_key.replace("anomaly_", "", 1) if entity_key.startswith("anomaly_") else entity_key
+    kpi_label = KPI_LABELS.get(clean_kpi_id, "Anomalie")
+    default_title = f"Analyse IA temporairement indisponible — {kpi_label}" if domain != "stock" else f"Action pour {entity_key}"
+
+    if existing:
+        if existing.status == RecommendationStatus.acknowledged:
+            existing.status = RecommendationStatus.pending
+        existing.title = data_dict.get("title", existing.title)
+        existing.explanation = data_dict.get("explanation", existing.explanation)
+        existing.source_type = source_type
+        existing.action_type = action_enum
+        existing.action_payload = data_dict.get("action_payload", {})
+        existing.estimated_impact = estimated_impact
+        existing.expires_at = datetime.utcnow() + timedelta(days=7)
+        db.commit()
+        logger.info(f"Recommandation mise à jour en place pour entity_key={entity_key}")
+    else:
+        new_rec = AIRecommendation(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            entity_key=entity_key,
+            source_type=source_type,
+            source_id=source_id,
+            title=data_dict.get("title", default_title),
+            explanation=data_dict.get("explanation", "Anomalie ou alerte détectée"),
+            action_type=action_enum,
+            action_payload=data_dict.get("action_payload", {}),
+            estimated_impact=estimated_impact,
+            status=RecommendationStatus.pending,
+            created_at=datetime.utcnow(),
+            expires_at=datetime.utcnow() + timedelta(days=7)
         )
-
-        response_text = completion.choices[0].message.content
-        data = json.loads(response_text)
-
-        # Fallback neutre pour estimated_impact
-        impact_raw = data.get("estimated_impact", {})
-        if isinstance(impact_raw, str):
-            estimated_impact = {"label": impact_raw, "confidence": "medium"}
-        else:
-            estimated_impact = {
-                "label": impact_raw.get("label", "Impact non estimé"),
-                "confidence": impact_raw.get("confidence", "medium")
-            }
-
-        parsed_action_type = data.get("action_type", "none")
-        if parsed_action_type not in allowed_actions:
-            logger.warning(
-                f"Action '{parsed_action_type}' non autorisée pour le domaine '{domain}'. Fallback sur 'none'."
-            )
-            parsed_action_type = "none"
-
-        try:
-            action_enum = RecommendationAction(parsed_action_type)
-        except ValueError:
-            action_enum = RecommendationAction.none
-
-        if existing:
-            existing.title = data.get("title", existing.title)
-            existing.explanation = data.get("explanation", existing.explanation)
-            existing.action_type = action_enum
-            existing.action_payload = data.get("action_payload", {})
-            existing.estimated_impact = estimated_impact
-            existing.expires_at = datetime.utcnow() + timedelta(days=7)
-            db.commit()
-            logger.info(f"Recommandation mise à jour en place pour source_id={source_id}")
-        else:
-            new_rec = AIRecommendation(
-                id=uuid.uuid4(),
-                tenant_id=tenant_id,
-                source_type=source_type,
-                source_id=source_id,
-                title=data.get("title", f"Action pour {source_id}"),
-                explanation=data.get("explanation", item_data['alert'].message),
-                action_type=action_enum,
-                action_payload=data.get("action_payload", {}),
-                estimated_impact=estimated_impact,
-                status=RecommendationStatus.pending,
-                created_at=datetime.utcnow(),
-                expires_at=datetime.utcnow() + timedelta(days=7)
-            )
-            db.add(new_rec)
-            db.commit()
-            logger.info(f"Recommandation créée avec succès pour source_id={source_id}")
-
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Erreur lors de la génération de recommandation pour source_id={source_id}: {e}")
+        db.add(new_rec)
+        db.commit()
+        logger.info(f"Recommandation créée avec succès pour entity_key={entity_key}")
 
 
 def _process_overflow_summary(
@@ -269,7 +592,9 @@ def _process_overflow_summary(
     overflow_count: int,
     overflow_items: list[dict]
 ):
+    overflow_entity_key = overflow_source_id
     item_descriptions = []
+
     for item in overflow_items:
         data = item.get("data", {})
         if item.get("domain") == "stock":
@@ -289,9 +614,8 @@ def _process_overflow_summary(
 
     existing = db.query(AIRecommendation).filter(
         AIRecommendation.tenant_id == tenant_id,
-        AIRecommendation.source_type == RecommendationSource.anomaly,
-        AIRecommendation.source_id == overflow_source_id,
-        AIRecommendation.status == RecommendationStatus.pending
+        AIRecommendation.entity_key == overflow_entity_key,
+        AIRecommendation.status.in_([RecommendationStatus.pending, RecommendationStatus.acknowledged])
     ).first()
 
     estimated_impact = {"label": f"{overflow_count} anomalies en attente", "confidence": "medium"}
@@ -308,6 +632,7 @@ def _process_overflow_summary(
         new_rec = AIRecommendation(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
+            entity_key=overflow_entity_key,
             source_type=RecommendationSource.anomaly,
             source_id=overflow_source_id,
             title=title,
@@ -323,17 +648,15 @@ def _process_overflow_summary(
         db.commit()
 
 
-def _expire_obsolete_recommendations(db: Session, tenant_id: uuid.UUID, active_source_ids: set[str]):
+def _expire_obsolete_recommendations(db: Session, tenant_id: uuid.UUID, active_entity_keys: set[str]):
     pending_recs = db.query(AIRecommendation).filter(
         AIRecommendation.tenant_id == tenant_id,
         AIRecommendation.status == RecommendationStatus.pending
     ).all()
 
     for rec in pending_recs:
-        if rec.source_id not in active_source_ids:
+        if rec.entity_key not in active_entity_keys:
             rec.status = RecommendationStatus.expired
-            logger.info(
-                f"Recommandation pending '{rec.source_id}' expirée "
-                f"(anomalie résolue ou basculée dans l'overflow suite au réordonnancement par priorité)."
-            )
+            logger.info(f"Recommandation expirée automatiquement : entity_key={rec.entity_key}")
+
     db.commit()
