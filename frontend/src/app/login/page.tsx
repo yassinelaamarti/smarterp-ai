@@ -31,11 +31,15 @@ export default function LoginPage() {
     setIsLoading(true);
     setError(null);
 
+    const cleanEmail = email.trim();
+    const cleanPassword = password.trim();
+
     try {
       const response = await api.post<{ access_token: string }>("/api/auth/login", {
-        email,
-        password,
+        email: cleanEmail,
+        password: cleanPassword,
       });
+
       
       const { access_token } = response.data;
       await login(access_token);

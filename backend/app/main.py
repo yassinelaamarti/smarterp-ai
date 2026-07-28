@@ -45,11 +45,19 @@ async def lifespan(app: FastAPI):
 
     Base.metadata.create_all(bind=engine)
     
-    # Auto-migration des colonnes pour les rapports programmés
+    # Auto-migration des colonnes et des enums PostgreSQL
     db_mig = SessionLocal()
     try:
         from sqlalchemy import text
+        for val in ['pending', 'executed', 'dismissed', 'failed', 'expired', 'acknowledged']:
+            try:
+                db_mig.execute(text(f"ALTER TYPE recommendationstatus ADD VALUE IF NOT EXISTS '{val}'"))
+                db_mig.commit()
+            except Exception:
+                db_mig.rollback()
+
         for col_name, col_type in [
+
             ("report_schedule", "VARCHAR DEFAULT 'none'"),
             ("report_email", "VARCHAR"),
             ("last_report_sent", "VARCHAR")
@@ -61,9 +69,10 @@ async def lifespan(app: FastAPI):
             except Exception:
                 db_mig.rollback()
     except Exception as e:
-        logger.error(f"Erreur lors de la migration des colonnes users: {e}")
+        logger.error(f"Erreur lors de la migration de la base de données: {e}")
     finally:
         db_mig.close()
+
     
     # Seeder le tenant et l'utilisateur admin par défaut s'il n'y a pas d'utilisateurs
     db = SessionLocal()
@@ -166,11 +175,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8000"],
+    allow_origin_regex=r"http://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 app.include_router(auth.router)
 app.include_router(kpis.router)

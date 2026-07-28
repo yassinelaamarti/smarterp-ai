@@ -26,13 +26,17 @@ class OdooActionService:
         if action_type == "restock_order":
             product_id = payload.get("product_id")
             quantity = payload.get("quantity")
+            if quantity is None and "quantity_to_order" in payload:
+                quantity = payload.get("quantity_to_order")
+
 
             if not product_id or not isinstance(product_id, int):
                 raise OdooActionValidationError("Le parametre 'product_id' doit etre un entier valide.")
             if not quantity or not isinstance(quantity, int) or quantity <= 0:
                 raise OdooActionValidationError("La quantite a commander doit etre un entier superieur a 0.")
-            if quantity > 1000:
-                raise OdooActionValidationError("La quantite demandee depasse le maximum autorise de 1000 unites.")
+            if quantity > 10000:
+                raise OdooActionValidationError("La quantite demandee depasse le maximum autorise de 10000 unites.")
+
 
             # Valider que le produit existe dans Odoo
             count = odoo.search_count("product.product", [["id", "=", product_id]])

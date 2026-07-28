@@ -14,7 +14,7 @@ export interface AIRecommendation {
     label: string;
     confidence: "low" | "medium" | "high";
   };
-  status: "pending" | "executed" | "dismissed" | "failed";
+  status: "pending" | "executed" | "dismissed" | "failed" | "acknowledged";
   executedBy?: number;
   executedAt?: string;
   createdAt: string;
@@ -53,7 +53,7 @@ interface RecommendationApiResponse {
     label: string;
     confidence: "low" | "medium" | "high";
   };
-  status: "pending" | "executed" | "dismissed" | "failed";
+  status: "pending" | "executed" | "dismissed" | "failed" | "acknowledged";
   executed_by?: number;
   executed_at?: string;
   created_at: string;
@@ -128,6 +128,11 @@ async function dismissRecommendation(id: string): Promise<any> {
   return data;
 }
 
+async function acknowledgeRecommendation(id: string): Promise<any> {
+  const { data } = await api.post(`/api/recommendations/${id}/acknowledge`);
+  return data;
+}
+
 export function useRecommendations() {
   const queryClient = useQueryClient();
 
@@ -153,6 +158,14 @@ export function useRecommendations() {
     },
   });
 
+  const acknowledgeMutation = useMutation({
+    mutationFn: acknowledgeRecommendation,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["recommendations"] });
+      queryClient.invalidateQueries({ queryKey: ["recommendationsAudit"] });
+    },
+  });
+
   return {
     recommendations: query.data,
     isLoading: query.isLoading,
@@ -162,8 +175,11 @@ export function useRecommendations() {
     executeError: executeMutation.error,
     dismiss: dismissMutation.mutate,
     isDismissing: dismissMutation.isPending,
+    acknowledge: acknowledgeMutation.mutate,
+    isAcknowledging: acknowledgeMutation.isPending,
   };
 }
+
 
 export function useRecommendationsAudit() {
   return useQuery({

@@ -9,22 +9,26 @@ import {
   Mail,
   Users,
   Loader2,
+  Check,
+  Info,
 } from "lucide-react";
-import { useRecommendations, AIRecommendation } from "@/hooks/useRecommendations";
+import { useRecommendations } from "@/hooks/useRecommendations";
 import { useAlerts } from "@/hooks/useAlerts";
 import { SourceDataModal } from "./SourceDataModal";
+import { RootCauseCard } from "./RootCauseCard";
 
 export function RecommendationsList() {
-  const { recommendations, isLoading, execute, isExecuting, dismiss } = useRecommendations();
+  const { recommendations, isLoading, execute, dismiss, acknowledge } = useRecommendations();
   const { data: alerts } = useAlerts();
 
   // Gestion du modal d'explicabilité
   const [selectedSourceData, setSelectedSourceData] = useState<any | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // ID de la recommandation en cours d'exécution pour le spinner individuel
+  // ID de la recommandation en cours pour le spinner individuel
   const [executingId, setExecutingId] = useState<string | null>(null);
   const [dismissingId, setDismissingId] = useState<string | null>(null);
+  const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null);
 
   const handleExecute = (id: string) => {
     setExecutingId(id);
@@ -37,6 +41,13 @@ export function RecommendationsList() {
     setDismissingId(id);
     dismiss(id, {
       onSettled: () => setDismissingId(null),
+    });
+  };
+
+  const handleAcknowledge = (id: string) => {
+    setAcknowledgingId(id);
+    acknowledge(id, {
+      onSettled: () => setAcknowledgingId(null),
     });
   };
 
@@ -57,7 +68,7 @@ export function RecommendationsList() {
       case "create_crm_activity":
         return <Users className="h-4 w-4 text-purple-600" />;
       default:
-        return <Sparkles className="h-4 w-4 text-slate-600" />;
+        return <Info className="h-4 w-4 text-indigo-600" />;
     }
   };
 
@@ -70,7 +81,7 @@ export function RecommendationsList() {
       case "create_crm_activity":
         return `Planifier Activité CRM`;
       default:
-        return "Aucune action requise";
+        return "Analyse & Diagnostic Informatif";
     }
   };
 
@@ -103,18 +114,28 @@ export function RecommendationsList() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {recommendations.map((rec) => {
-          const correspondingAlert = alerts?.find((a) => a.id === rec.sourceId);
+          const correspondingAlert = alerts?.find((a) => a.id === rec.sourceId || `anomaly_${a.id}` === rec.sourceId);
           const hasExplainability = !!correspondingAlert?.sourceData;
+          const isInformative = rec.actionType === "none";
+          const anomalyId = correspondingAlert?.id || rec.sourceId.replace("anomaly_", "");
 
           return (
             <div
               key={rec.id}
-              className="flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-5 shadow-xs hover:shadow-md hover:border-slate-350 transition-all duration-300 animate-fadeIn"
+              className={`flex flex-col justify-between rounded-2xl border p-5 shadow-xs hover:shadow-md transition-all duration-300 animate-fadeIn ${
+                isInformative
+                  ? "border-indigo-150 bg-slate-50/40 hover:border-indigo-300"
+                  : "border-slate-200/80 bg-white hover:border-slate-350"
+              }`}
             >
               <div>
                 {/* Header */}
                 <div className="flex items-start justify-between gap-3">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 border border-slate-200 px-2.5 py-1 text-2xs font-bold text-slate-600 uppercase">
+                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-2xs font-bold uppercase ${
+                    isInformative
+                      ? "bg-indigo-50 border-indigo-200 text-indigo-700"
+                      : "bg-slate-50 border-slate-200 text-slate-600"
+                  }`}>
                     {getActionIcon(rec.actionType)}
                     {getActionLabel(rec.actionType, rec.actionPayload)}
                   </span>
@@ -140,6 +161,13 @@ export function RecommendationsList() {
                 <p className="mt-2 text-xs leading-relaxed text-slate-550">
                   {rec.explanation}
                 </p>
+
+                {/* Root Cause Analysis pour les anomalies informatives */}
+                {isInformative && anomalyId && (
+                  <div className="mt-3">
+                    <RootCauseCard anomalyId={anomalyId} defaultExpanded={false} />
+                  </div>
+                )}
               </div>
 
               {/* Actions */}
@@ -157,31 +185,48 @@ export function RecommendationsList() {
                 )}
 
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleDismiss(rec.id)}
-                    disabled={executingId === rec.id || dismissingId === rec.id}
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-250 hover:bg-slate-50 text-xs font-bold text-slate-650 px-3 py-1.5 transition-all cursor-pointer disabled:opacity-50"
-                  >
-                    {dismissingId === rec.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <XCircle className="h-3.5 w-3.5 text-slate-400" />
-                    )}
-                    Ignorer
-                  </button>
-                  
-                  <button
-                    onClick={() => handleExecute(rec.id)}
-                    disabled={executingId === rec.id || dismissingId === rec.id}
-                    className="inline-flex items-center gap-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white px-3.5 py-1.5 transition-all cursor-pointer shadow-2xs shadow-blue-500/10 hover:shadow-sm disabled:opacity-50"
-                  >
-                    {executingId === rec.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <CheckCircle className="h-3.5 w-3.5" />
-                    )}
-                    Exécuter
-                  </button>
+                  {isInformative ? (
+                    <button
+                      onClick={() => handleAcknowledge(rec.id)}
+                      disabled={acknowledgingId === rec.id}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white px-3.5 py-1.5 transition-all cursor-pointer shadow-2xs shadow-indigo-500/10 hover:shadow-sm disabled:opacity-50"
+                    >
+                      {acknowledgingId === rec.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Check className="h-3.5 w-3.5" />
+                      )}
+                      Marquer comme lu
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => handleDismiss(rec.id)}
+                        disabled={executingId === rec.id || dismissingId === rec.id}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-250 hover:bg-slate-50 text-xs font-bold text-slate-650 px-3 py-1.5 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {dismissingId === rec.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <XCircle className="h-3.5 w-3.5 text-slate-400" />
+                        )}
+                        Ignorer
+                      </button>
+                      
+                      <button
+                        onClick={() => handleExecute(rec.id)}
+                        disabled={executingId === rec.id || dismissingId === rec.id}
+                        className="inline-flex items-center gap-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white px-3.5 py-1.5 transition-all cursor-pointer shadow-2xs shadow-blue-500/10 hover:shadow-sm disabled:opacity-50"
+                      >
+                        {executingId === rec.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <CheckCircle className="h-3.5 w-3.5" />
+                        )}
+                        Exécuter
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -196,7 +241,8 @@ export function RecommendationsList() {
             setIsModalOpen(false);
             setSelectedSourceData(null);
           }}
-          sourceData={selectedSourceData}
+          title="Détail du signal Odoo"
+          data={selectedSourceData}
         />
       )}
     </div>

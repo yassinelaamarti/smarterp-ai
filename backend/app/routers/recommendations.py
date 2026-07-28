@@ -191,3 +191,40 @@ def dismiss_recommendation(
     db.commit()
 
     return {"status": "success", "message": "Recommandation ignorée avec succès."}
+
+
+@router.post("/{rec_id}/acknowledge")
+def acknowledge_recommendation(
+    rec_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Marque une recommandation informative comme lue/vue (statut: acknowledged)."""
+    rec = db.query(AIRecommendation).filter(AIRecommendation.id == rec_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recommandation non trouvée.")
+
+    if rec.status != RecommendationStatus.pending:
+        raise HTTPException(status_code=400, detail=f"Cette recommandation a déjà été traitée (statut: {rec.status.value}).")
+
+    rec.status = RecommendationStatus.acknowledged
+    rec.executed_by = current_user.id
+    rec.executed_at = datetime.utcnow()
+
+    log = AIActionLog(
+        id=uuid.uuid4(),
+        recommendation_id=rec.id,
+        tenant_id=rec.tenant_id,
+        action_type=rec.action_type,
+        action_payload=rec.action_payload,
+        odoo_result={"info": "Recommandation marquée comme lue/vue par l'utilisateur"},
+        executed_by=current_user.id,
+        executed_at=datetime.utcnow(),
+        success=True,
+        error_message=None
+    )
+    db.add(log)
+    db.commit()
+
+    return {"status": "success", "message": "Recommandation marquée comme lue avec succès."}
+
