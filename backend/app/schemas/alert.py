@@ -14,6 +14,10 @@ class AlertSourceData(BaseModel):
     z_score: Optional[float] = None
     mean: Optional[float] = None
     root_causes: Optional[List[str]] = None
+    partner_id: Optional[int] = None
+    partner_ids: Optional[List[int]] = None
+    lead_id: Optional[int] = None
+
 
 
 class Alert(BaseModel):

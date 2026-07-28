@@ -57,11 +57,10 @@ def get_avg_order_value(revenue: float, orders_count: int) -> float:
     return round(revenue / orders_count, 2)
 
 
-def get_stock_alerts_count() -> int:
-    return odoo.search_count(
-        "product.product",
-        [["qty_available", "<", 5], ["type", "=", "product"]],
-    )
+def get_stock_alerts_count(db=None) -> int:
+    from app.services.stock_service import count_critical_stock_products
+    return count_critical_stock_products(db=db)
+
 
 
 def get_new_leads_count() -> int:

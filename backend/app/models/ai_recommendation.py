@@ -1,7 +1,7 @@
 import uuid
 import enum
 from datetime import datetime
-from sqlalchemy import Column, String, JSON, DateTime, ForeignKey, Text, Boolean, Enum, UUID, Integer, Index
+from sqlalchemy import Column, String, JSON, DateTime, ForeignKey, Text, Boolean, Enum, UUID, Integer, Index, text
 from app.database import Base
 
 
@@ -24,22 +24,13 @@ class RecommendationStatus(str, enum.Enum):
     dismissed = "dismissed"
     failed = "failed"
     expired = "expired"
+    acknowledged = "acknowledged"
 
 
 class AIRecommendation(Base):
     """Représente une recommandation IA actionnable par l'utilisateur."""
 
     __tablename__ = "ai_recommendation"
-    __table_args__ = (
-        Index(
-            "uq_pending_recommendation_per_anomaly",
-            "tenant_id",
-            "source_type",
-            "source_id",
-            unique=True,
-            postgresql_where=(Column("status") == RecommendationStatus.pending)
-        ),
-    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenant.id"), nullable=False)
@@ -51,11 +42,23 @@ class AIRecommendation(Base):
     action_payload = Column(JSON, nullable=False, default=dict)  # ex: {"product_id": 36, "quantity": 50}
     estimated_impact = Column(JSON, nullable=True)  # ex: {"label": "+12 000 DH", "confidence": "medium"}
     status = Column(Enum(RecommendationStatus), default=RecommendationStatus.pending, nullable=False)
+    entity_key = Column(String(255), nullable=True, index=True)
     executed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     executed_at = Column(DateTime(timezone=True), nullable=True)
     failure_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index(
+            "uq_pending_recommendation_per_anomaly",
+            "tenant_id",
+            "source_type",
+            "source_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'")
+        ),
+    )
 
 
 class AIActionLog(Base):
