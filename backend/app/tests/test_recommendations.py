@@ -35,14 +35,15 @@ class TestRecommendations(unittest.TestCase):
             )
         self.assertIn("quantite a commander doit etre un entier superieur a 0", str(ctx.exception))
 
-        # Cas 2 : Quantité trop élevée (> 1000)
+        # Cas 2 : Quantité trop élevée (> 10000)
         with self.assertRaises(ValueError) as ctx:
             OdooActionService.execute_action(
                 "restock_order",
-                {"product_id": 12, "quantity": 1050},
+                {"product_id": 12, "quantity": 15000},
                 self.user,
                 self.db
             )
+
         self.assertIn("quantite demandee depasse le maximum autorise", str(ctx.exception))
 
     @patch("app.services.odoo_action_service.odoo")

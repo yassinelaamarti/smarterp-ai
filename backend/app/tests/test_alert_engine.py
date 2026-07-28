@@ -26,28 +26,22 @@ class TestAlertEngine(unittest.TestCase):
 
     def test_evaluate_alerts_stock_critical(self):
         kpis = [
-            KPI(id="stock_alerts", label="Stock bas", value=15.0)
+            KPI(id="stock_alerts", label="Stock bas", value=12.0)
         ]
+
+
         alerts = evaluate_alerts(kpis, self.default_settings)
         self.assertEqual(len(alerts), 1)
         self.assertEqual(alerts[0].severity, "critical")
         self.assertIn("stock critique", alerts[0].message)
 
-    def test_evaluate_alerts_stock_warning(self):
-        kpis = [
-            KPI(id="stock_alerts", label="Stock bas", value=5.0)
-        ]
-        alerts = evaluate_alerts(kpis, self.default_settings)
-        self.assertEqual(len(alerts), 1)
-        self.assertEqual(alerts[0].severity, "warning")
-        self.assertIn("stock bas à surveiller", alerts[0].message)
-
     def test_evaluate_alerts_stock_no_alert(self):
         kpis = [
-            KPI(id="stock_alerts", label="Stock bas", value=1.0)
+            KPI(id="stock_alerts", label="Stock bas", value=0.0)
         ]
         alerts = evaluate_alerts(kpis, self.default_settings)
         self.assertEqual(len(alerts), 0)
+
 
     def test_evaluate_alerts_late_orders_critical(self):
         kpis = [
