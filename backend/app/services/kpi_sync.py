@@ -22,10 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 CANONICAL_KPI_IDS = {
-    "revenue", "new_orders", "avg_order_value",
-    "stock_alerts", "new_leads", "conversion_rate",
-    "pipeline_value", "stock_value", "active_customers", "late_orders", "unpaid_invoices",
+    "revenue", "new_orders", "avg_order_value", "unpaid_invoices", "unpaid_invoices_count",
+    "stock_alerts", "stock_value", "late_orders",
+    "new_leads", "conversion_rate", "pipeline_value", "active_customers",
 }
+
 
 
 

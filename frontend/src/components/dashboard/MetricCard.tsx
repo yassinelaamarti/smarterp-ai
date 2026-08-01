@@ -16,6 +16,7 @@ import {
   Users,
   Clock,
   FileText,
+  Receipt,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { KPI } from "@/types";
@@ -45,16 +46,19 @@ const kpiIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   active_customers: Users,
   late_orders: Clock,
   unpaid_invoices: FileText,
+  unpaid_invoices_count: Receipt,
 };
 
-// Classification des KPIs en 3 familles
+// Classification des KPIs en familles
 const FLOW_KPIS = ["revenue", "new_orders", "new_leads", "active_customers", "late_orders"];
 const RATIO_KPIS = ["avg_order_value", "conversion_rate"];
+const SNAPSHOT_KPIS = ["pipeline_value", "stock_value", "unpaid_invoices", "unpaid_invoices_count", "stock_alerts"];
 
 export function MetricCard({ kpi, onClick }: MetricCardProps) {
   const [period, setPeriod] = useState<"week" | "month" | "trimester">("month");
   const isFlowKpi = FLOW_KPIS.includes(kpi.id);
   const isRatioKpi = RATIO_KPIS.includes(kpi.id);
+  const isSnapshotKpi = kpi.isSnapshot || SNAPSHOT_KPIS.includes(kpi.id);
 
   const { data: historyData } = useKpiHistory(kpi.id, period);
 
@@ -130,23 +134,31 @@ export function MetricCard({ kpi, onClick }: MetricCardProps) {
           </div>
 
           {trend && TrendIcon && kpi.changePercent !== undefined && (
-            <div
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold shrink-0 self-start",
-                trend.color
+            <div className="flex flex-col items-end shrink-0 self-start">
+              <div
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold",
+                  trend.color
+                )}
+              >
+                <TrendIcon className="h-3 w-3" />
+                <span>
+                  {kpi.changePercent > 0 ? "+" : ""}
+                  {kpi.changePercent}%
+                </span>
+              </div>
+              {/* Comparaison explicite pour les instantanés */}
+              {isSnapshotKpi && (
+                <span className="mt-1 text-[10px] font-medium text-slate-400">
+                  vs il y a 30 jours
+                </span>
               )}
-            >
-              <TrendIcon className="h-3 w-3" />
-              <span>
-                {kpi.changePercent > 0 ? "+" : ""}
-                {kpi.changePercent}%
-              </span>
             </div>
           )}
         </div>
 
-        {/* Périodes (Onglets) pour les KPIs de flux */}
-        {(isFlowKpi || isRatioKpi) && (
+        {/* Périodes (Onglets) pour les KPIs de flux/ratio (exclus pour les instantanés) */}
+        {(isFlowKpi || isRatioKpi) && !isSnapshotKpi && (
           <div className="mt-3 flex items-center gap-1 border-t border-slate-100 pt-2" onClick={(e) => e.stopPropagation()}>
             <button
               onClick={() => setPeriod("week")}
@@ -178,6 +190,7 @@ export function MetricCard({ kpi, onClick }: MetricCardProps) {
           </div>
         )}
       </div>
+
 
       {/* Sparkline basée sur les VRAIES données historiques */}
       <div className="mt-3 h-10 w-full">

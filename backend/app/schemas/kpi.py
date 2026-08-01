@@ -20,6 +20,8 @@ class KPI(BaseModel):
     sample_warning_threshold: Optional[int] = 5
     sample_unit_label: Optional[str] = None
     criticality: Optional[Literal["normal", "attention", "critical"]] = "normal"
+    is_snapshot: Optional[bool] = False
+
 
 
 class AISummaryResponse(BaseModel):

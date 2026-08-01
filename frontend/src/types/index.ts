@@ -16,7 +16,9 @@ export interface KPI {
   sampleWarningThreshold?: number;
   sampleUnitLabel?: string;
   criticality?: "normal" | "attention" | "critical";
+  isSnapshot?: boolean;
 }
+
 
 
 export interface ChatMessage {

@@ -330,7 +330,10 @@ export function UnpaidInvoicesWidget({ data }: { data: any }) {
     { label: "60+j de retard", key: "overdue_60_plus", color: "bg-red-600", textColor: "text-red-800" },
   ];
 
-  const breakdownMap = new Map(data.aging_breakdown.map((item: any) => [item.key, item]));
+  const breakdownMap = new Map<string, { amount: number; count: number }>(
+    data.aging_breakdown.map((item: any) => [item.key, item])
+  );
+
 
   return (
     <div className="h-full flex flex-col p-4 overflow-y-auto">

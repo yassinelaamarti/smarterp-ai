@@ -13,10 +13,12 @@ from app.schemas.kpi import KPI, KPISourceData
 from app.services.date_utils import previous_month_str
 
 _KPI_ORDER = [
-    "revenue", "new_orders", "avg_order_value",
-    "stock_alerts", "new_leads", "conversion_rate",
-    "pipeline_value", "stock_value", "active_customers", "late_orders", "unpaid_invoices",
+    "revenue", "new_orders", "avg_order_value", "unpaid_invoices", "unpaid_invoices_count",
+    "stock_alerts", "stock_value", "late_orders",
+    "new_leads", "conversion_rate", "pipeline_value", "active_customers",
 ]
+
+_SNAPSHOT_KPIS = {"pipeline_value", "stock_value", "unpaid_invoices", "unpaid_invoices_count", "stock_alerts"}
 
 _KPI_SOURCE_META = {
     "revenue": {
@@ -73,6 +75,11 @@ _KPI_SOURCE_META = {
         "model": "account.move",
         "domain": "[('move_type', '=', 'out_invoice'), ('state', '=', 'posted'), ('payment_state', 'in', ['not_paid', 'partial'])]",
         "formula": "Somme des montants résiduels (amount_residual) des factures clients impayées"
+    },
+    "unpaid_invoices_count": {
+        "model": "account.move",
+        "domain": "[('move_type', '=', 'out_invoice'), ('state', '=', 'posted'), ('payment_state', 'in', ['not_paid', 'partial'])]",
+        "formula": "Nombre total de factures clients clientes impayées (complètement ou partiellement)"
     }
 }
 
@@ -146,7 +153,7 @@ def get_kpis() -> list[KPI]:
                 criticality = "critical" if r.value > 10 else ("attention" if r.value > 0 else "normal")
             elif r.id == "late_orders":
                 criticality = "critical" if r.value > 5 else ("attention" if r.value > 0 else "normal")
-            elif r.id == "unpaid_invoices":
+            elif r.id in ("unpaid_invoices", "unpaid_invoices_count"):
                 tot = unpaid_data.get("total_amount", 0)
                 o60 = unpaid_data.get("overdue_60_plus_amount", 0)
                 o30 = unpaid_data.get("overdue_30_60_amount", 0)
@@ -169,11 +176,13 @@ def get_kpis() -> list[KPI]:
                 sample_size=sample_size,
                 sample_warning_threshold=sample_warning_threshold,
                 sample_unit_label=sample_unit_label,
-                criticality=criticality
+                criticality=criticality,
+                is_snapshot=(r.id in _SNAPSHOT_KPIS)
             ))
         return result
     finally:
         db.close()
+
 
 
 

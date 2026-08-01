@@ -373,10 +373,13 @@ def get_kpis() -> list[KPI]:
         late_orders = 0
 
     try:
-        unpaid_invoices = get_unpaid_invoices_amount()
+        unpaid_invoices_info = get_unpaid_invoices_data()
+        unpaid_invoices = unpaid_invoices_info["total_amount"]
+        unpaid_invoices_count = unpaid_invoices_info["total_count"]
     except Exception as e:
         logger.error(f"Error calculating unpaid invoices: {e}")
         unpaid_invoices = 0.0
+        unpaid_invoices_count = 0
 
     return [
         KPI(id="revenue", label="Chiffre d'affaires (30j)", value=revenue, unit="MAD"),
@@ -395,6 +398,8 @@ def get_kpis() -> list[KPI]:
         KPI(id="active_customers", label="Clients actifs (30j)", value=active_customers, unit="clients"),
         KPI(id="late_orders", label="Commandes en retard", value=late_orders, unit="commandes"),
         KPI(id="unpaid_invoices", label="Factures impayées", value=unpaid_invoices, unit="MAD"),
+        KPI(id="unpaid_invoices_count", label="Nombre de factures impayées", value=unpaid_invoices_count, unit="factures"),
     ]
+
 
 

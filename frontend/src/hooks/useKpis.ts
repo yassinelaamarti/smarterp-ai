@@ -18,6 +18,7 @@ interface KPIApiResponse {
   sample_warning_threshold?: number;
   sample_unit_label?: string;
   criticality?: "normal" | "attention" | "critical";
+  is_snapshot?: boolean;
 }
 
 async function fetchKpis(): Promise<KPI[]> {
@@ -38,8 +39,10 @@ async function fetchKpis(): Promise<KPI[]> {
     sampleWarningThreshold: kpi.sample_warning_threshold,
     sampleUnitLabel: kpi.sample_unit_label,
     criticality: kpi.criticality ?? "normal",
+    isSnapshot: kpi.is_snapshot ?? false,
   }));
 }
+
 
 
 export function useKpis() {
