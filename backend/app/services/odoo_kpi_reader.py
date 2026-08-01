@@ -19,9 +19,10 @@ _MONTHS_FR = [
 ]
 
 
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from app.schemas.kpi import KPI
 from app.services.odoo_connector import odoo
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,11 @@ def get_monthly_revenue(days: int = 30) -> float:
     """Chiffre d'affaires sur la fenêtre glissante (30 jours par défaut)."""
     orders = odoo.search_read(
         "sale.order",
-        [["state", "in", ["sale", "done"]], ["date_order", ">=", _rolling_start_date(days)]],
+        [
+            ["state", "in", ["sale", "done"]],
+            ["date_order", ">=", _rolling_start_date(days)],
+            ["company_id", "=", settings.odoo_company_id],
+        ],
         ["amount_total"],
     )
     return round(sum(o["amount_total"] for o in orders), 2)
@@ -67,7 +72,10 @@ def get_new_orders_count(days: int = 30) -> int:
     """Nombre de nouvelles commandes sur la fenêtre glissante (30 jours par défaut)."""
     return odoo.search_count(
         "sale.order",
-        [["date_order", ">=", _rolling_start_date(days)]],
+        [
+            ["date_order", ">=", _rolling_start_date(days)],
+            ["company_id", "=", settings.odoo_company_id],
+        ],
     )
 
 
@@ -86,7 +94,11 @@ def get_new_leads_count(days: int = 30) -> int:
     """Nombre de nouveaux leads CRM sur 30 jours."""
     return odoo.search_count(
         "crm.lead",
-        [["create_date", ">=", _rolling_start_date(days)], ["type", "=", "lead"]],
+        [
+            ["create_date", ">=", _rolling_start_date(days)],
+            ["type", "=", "lead"],
+            ["company_id", "in", [False, settings.odoo_company_id]],
+        ],
     )
 
 
@@ -94,7 +106,11 @@ def get_conversion_rate(days: int = 30) -> float:
     """Taux de conversion des opportunités CRM sur 30 jours."""
     total = odoo.search_count(
         "crm.lead",
-        [["create_date", ">=", _rolling_start_date(days)], ["type", "=", "opportunity"]],
+        [
+            ["create_date", ">=", _rolling_start_date(days)],
+            ["type", "=", "opportunity"],
+            ["company_id", "in", [False, settings.odoo_company_id]],
+        ],
     )
     if total == 0:
         return 0.0
@@ -104,6 +120,7 @@ def get_conversion_rate(days: int = 30) -> float:
             ["create_date", ">=", _rolling_start_date(days)],
             ["type", "=", "opportunity"],
             ["stage_id.is_won", "=", True],
+            ["company_id", "in", [False, settings.odoo_company_id]],
         ],
     )
     return round((won / total) * 100, 1)
@@ -121,6 +138,7 @@ def get_pipeline_value() -> float:
             ["type", "=", "opportunity"],
             ["active", "=", True],
             ["stage_id.is_won", "=", False],
+            ["company_id", "in", [False, settings.odoo_company_id]],
         ],
         ["expected_revenue"],
     )
@@ -142,7 +160,10 @@ def get_active_customers_count(days: int = 30) -> int:
     """Nombre de clients distincts ayant passé au moins une commande sur 30 jours."""
     orders = odoo.search_read(
         "sale.order",
-        [["date_order", ">=", _rolling_start_date(days)]],
+        [
+            ["date_order", ">=", _rolling_start_date(days)],
+            ["company_id", "=", settings.odoo_company_id],
+        ],
         ["partner_id"],
     )
     partner_ids = {o["partner_id"][0] for o in orders if o.get("partner_id")}
@@ -153,7 +174,6 @@ def get_late_orders_count() -> int:
     """
     Bons de livraison clients (stock.picking) non encore livrés (non 'done' ou 'cancel')
     dont la date de livraison prévue (scheduled_date) est déjà dépassée.
-    Se baser sur stock.picking garantit que les commandes déjà livrées ne sont pas comptées.
     """
     now_str = date.today().strftime("%Y-%m-%d 23:59:59")
     try:
@@ -163,6 +183,7 @@ def get_late_orders_count() -> int:
                 ["picking_type_id.code", "=", "outgoing"],
                 ["state", "not in", ["done", "cancel"]],
                 ["scheduled_date", "<", now_str],
+                ["company_id", "=", settings.odoo_company_id],
             ],
         )
         return late_pickings
@@ -174,6 +195,7 @@ def get_late_orders_count() -> int:
             [
                 ["state", "=", "sale"],
                 ["commitment_date", "<", today_str],
+                ["company_id", "=", settings.odoo_company_id],
             ],
         )
 
@@ -196,6 +218,7 @@ def get_monthly_revenue_history(months: int = 6) -> list[dict]:
                 ["state", "in", ["sale", "done"]],
                 ["date_order", ">=", start.strftime("%Y-%m-%d 00:00:00")],
                 ["date_order", "<", end.strftime("%Y-%m-%d 00:00:00")],
+                ["company_id", "=", settings.odoo_company_id],
             ],
             ["amount_total"],
         )
@@ -210,12 +233,10 @@ def get_monthly_revenue_history(months: int = 6) -> list[dict]:
     return history
 
 
-from datetime import datetime
-
 def get_unpaid_invoices_data() -> dict:
     """
     Calcule le montant résiduel total des factures clientes impayées (account.move)
-    et les ventile exactement en 4 catégories sans aucun résidu non comptabilisé :
+    filtré sur la société active (settings.odoo_company_id) et les ventile en 4 catégories :
     1. Pas encore échues (due_date > aujourd'hui)
     2. 0-30 jours de retard
     3. 30-60 jours de retard
@@ -228,6 +249,7 @@ def get_unpaid_invoices_data() -> dict:
             ["move_type", "=", "out_invoice"],
             ["state", "=", "posted"],
             ["payment_state", "in", ["not_paid", "partial"]],
+            ["company_id", "=", settings.odoo_company_id],
         ],
         ["name", "invoice_date_due", "amount_residual"],
     )
@@ -277,6 +299,7 @@ def get_unpaid_invoices_data() -> dict:
         "overdue_60_plus_amount": round(b_60_plus["amount"], 2),
         "overdue_30_60_amount": round(b_30_60["amount"], 2),
     }
+
 
 
 def get_unpaid_invoices_amount() -> float:

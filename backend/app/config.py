@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     odoo_db: str
     odoo_username: str
     odoo_api_key: str
+    odoo_company_id: int = 1
+
 
     # Base de données (cache)
     database_url: str
