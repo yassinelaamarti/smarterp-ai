@@ -14,6 +14,10 @@ interface KPIApiResponse {
     domain: string;
     formula: string;
   };
+  sample_size?: number;
+  sample_warning_threshold?: number;
+  sample_unit_label?: string;
+  criticality?: "normal" | "attention" | "critical";
 }
 
 async function fetchKpis(): Promise<KPI[]> {
@@ -30,8 +34,13 @@ async function fetchKpis(): Promise<KPI[]> {
       domain: kpi.source_data.domain,
       formula: kpi.source_data.formula,
     } : undefined,
+    sampleSize: kpi.sample_size,
+    sampleWarningThreshold: kpi.sample_warning_threshold,
+    sampleUnitLabel: kpi.sample_unit_label,
+    criticality: kpi.criticality ?? "normal",
   }));
 }
+
 
 export function useKpis() {
   return useQuery({

@@ -15,6 +15,7 @@ import {
   Package,
   Users,
   Clock,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { KPI } from "@/types";
@@ -43,6 +44,7 @@ const kpiIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   stock_value: Package,
   active_customers: Users,
   late_orders: Clock,
+  unpaid_invoices: FileText,
 };
 
 // Classification des KPIs en 3 familles
@@ -60,7 +62,32 @@ export function MetricCard({ kpi, onClick }: MetricCardProps) {
   const TrendIcon = trend?.icon;
   const Icon = kpiIcons[kpi.id] || Package;
 
-  const isAlert = (kpi.id === "stock_alerts" || kpi.id === "late_orders") && kpi.value > 0;
+  // Hierarchie visuelle par criticité ('normal' | 'attention' | 'critical')
+  const criticality = kpi.criticality ?? "normal";
+
+  const cardStyle =
+    criticality === "critical"
+      ? "bg-red-50/40 border-red-200/90 shadow-sm hover:border-red-300 hover:shadow-red-500/5"
+      : criticality === "attention"
+      ? "bg-amber-50/40 border-amber-200/80 shadow-sm hover:border-amber-300"
+      : "bg-white border-slate-200/80 shadow-sm hover:border-blue-300";
+
+  const iconStyle =
+    criticality === "critical"
+      ? "bg-red-100/70 text-red-700 border-red-200/60 group-hover:bg-red-100 group-hover:text-red-800"
+      : criticality === "attention"
+      ? "bg-amber-100/50 text-amber-700 border-amber-200/50 group-hover:bg-amber-100 group-hover:text-amber-800"
+      : "bg-slate-50 border-slate-100 group-hover:border-slate-200 group-hover:text-slate-700 text-slate-500";
+
+  const strokeColor =
+    criticality === "critical" ? "#dc2626" : criticality === "attention" ? "#d97706" : "#2563eb";
+  const fillColor =
+    criticality === "critical" ? "#ef4444" : criticality === "attention" ? "#f59e0b" : "#3b82f6";
+
+  // Avertissement d'échantillon réduit sur les ratios
+  const isSmallSample =
+    kpi.sampleSize !== undefined &&
+    kpi.sampleSize < (kpi.sampleWarningThreshold ?? 5);
 
   return (
     <div
@@ -68,9 +95,7 @@ export function MetricCard({ kpi, onClick }: MetricCardProps) {
       className={cn(
         "relative flex flex-col justify-between overflow-hidden rounded-2xl border p-5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg group",
         onClick ? "cursor-pointer" : "",
-        isAlert
-          ? "bg-amber-50/40 border-amber-200/80 shadow-sm hover:border-amber-300"
-          : "bg-white border-slate-200/80 shadow-sm hover:border-blue-300"
+        cardStyle
       )}
     >
       <div>
@@ -79,31 +104,35 @@ export function MetricCard({ kpi, onClick }: MetricCardProps) {
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 truncate">
             {kpi.label}
           </span>
-          <div
-            className={cn(
-              "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-500 transition-colors duration-200 bg-slate-50 border border-slate-100 group-hover:border-slate-200 group-hover:text-slate-700",
-              isAlert && "bg-amber-100/50 text-amber-700 border-amber-200/50 group-hover:bg-amber-100 group-hover:text-amber-800"
-            )}
-          >
+          <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors duration-200 border", iconStyle)}>
             <Icon className="h-4 w-4" />
           </div>
         </div>
 
         {/* Value + Trend */}
         <div className="mt-3 flex items-baseline justify-between gap-2">
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-2xl font-black tracking-tight text-slate-900">
-              {kpi.value.toLocaleString("fr-FR")}
-            </span>
-            {kpi.unit && (
-              <span className="text-xs font-medium text-slate-500">{kpi.unit}</span>
+          <div className="flex flex-col">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-2xl font-black tracking-tight text-slate-900">
+                {kpi.value.toLocaleString("fr-FR")}
+              </span>
+              {kpi.unit && (
+                <span className="text-xs font-medium text-slate-500">{kpi.unit}</span>
+              )}
+            </div>
+
+            {/* Avertissement Petit Échantillon */}
+            {isSmallSample && (
+              <p className="mt-1 text-[11px] font-medium text-amber-700/80 italic leading-tight">
+                Basé sur seulement {kpi.sampleSize} {kpi.sampleUnitLabel || "observations"} — donnée peu représentative
+              </p>
             )}
           </div>
 
           {trend && TrendIcon && kpi.changePercent !== undefined && (
             <div
               className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold shrink-0",
+                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold shrink-0 self-start",
                 trend.color
               )}
             >
@@ -157,8 +186,8 @@ export function MetricCard({ kpi, onClick }: MetricCardProps) {
             <AreaChart data={historyData} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id={`grad-${kpi.id}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={isAlert ? "#f59e0b" : "#3b82f6"} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={isAlert ? "#f59e0b" : "#3b82f6"} stopOpacity={0} />
+                  <stop offset="5%" stopColor={fillColor} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={fillColor} stopOpacity={0} />
                 </linearGradient>
               </defs>
               <Tooltip
@@ -177,7 +206,7 @@ export function MetricCard({ kpi, onClick }: MetricCardProps) {
               <Area
                 type="stepAfter"
                 dataKey="value"
-                stroke={isAlert ? "#d97706" : "#2563eb"}
+                stroke={strokeColor}
                 strokeWidth={2}
                 fillOpacity={1}
                 fill={`url(#grad-${kpi.id})`}
@@ -191,3 +220,4 @@ export function MetricCard({ kpi, onClick }: MetricCardProps) {
     </div>
   );
 }
+

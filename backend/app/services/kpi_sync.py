@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 CANONICAL_KPI_IDS = {
     "revenue", "new_orders", "avg_order_value",
     "stock_alerts", "new_leads", "conversion_rate",
-    "pipeline_value", "stock_value", "active_customers", "late_orders",
+    "pipeline_value", "stock_value", "active_customers", "late_orders", "unpaid_invoices",
 }
+
 
 
 def purge_orphan_kpi_cache(db: Session, dry_run: bool = False) -> list[str]:

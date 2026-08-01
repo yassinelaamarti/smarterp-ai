@@ -64,6 +64,17 @@ def get_kpi_context(kpi_id: str, period: str = "month") -> dict:
             ]
         }
 
+    elif kpi_id == "unpaid_invoices":
+        from app.services.odoo_kpi_reader import get_unpaid_invoices_data
+        try:
+            unpaid_info = get_unpaid_invoices_data()
+            return {
+                "type": "unpaid_breakdown",
+                "data": unpaid_info
+            }
+        except Exception:
+            return {"type": "none", "data": None}
+
     elif kpi_id == "new_orders":
         return {
             "type": "donut",
@@ -76,4 +87,5 @@ def get_kpi_context(kpi_id: str, period: str = "month") -> dict:
 
     # Si aucun contexte spécifique n'est défini
     return {"type": "none", "data": None}
+
 

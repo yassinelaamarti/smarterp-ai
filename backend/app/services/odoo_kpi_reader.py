@@ -210,12 +210,85 @@ def get_monthly_revenue_history(months: int = 6) -> list[dict]:
     return history
 
 
+from datetime import datetime
+
+def get_unpaid_invoices_data() -> dict:
+    """
+    Calcule le montant résiduel total des factures clientes impayées (account.move)
+    et les ventile exactement en 4 catégories sans aucun résidu non comptabilisé :
+    1. Pas encore échues (due_date > aujourd'hui)
+    2. 0-30 jours de retard
+    3. 30-60 jours de retard
+    4. 60+ jours de retard
+    """
+    today = date.today()
+    invoices = odoo.search_read(
+        "account.move",
+        [
+            ["move_type", "=", "out_invoice"],
+            ["state", "=", "posted"],
+            ["payment_state", "in", ["not_paid", "partial"]],
+        ],
+        ["name", "invoice_date_due", "amount_residual"],
+    )
+
+    total_residual = round(sum(inv.get("amount_residual", 0.0) for inv in invoices), 2)
+    total_count = len(invoices)
+
+    not_due = {"count": 0, "amount": 0.0}
+    b_0_30 = {"count": 0, "amount": 0.0}
+    b_30_60 = {"count": 0, "amount": 0.0}
+    b_60_plus = {"count": 0, "amount": 0.0}
+
+    for inv in invoices:
+        res = inv.get("amount_residual", 0.0)
+        due_str = inv.get("invoice_date_due")
+
+        if due_str:
+            due_date = datetime.strptime(due_str, "%Y-%m-%d").date()
+            days_overdue = (today - due_date).days
+        else:
+            days_overdue = 0
+
+        if days_overdue < 0:
+            not_due["count"] += 1
+            not_due["amount"] += res
+        elif days_overdue <= 30:
+            b_0_30["count"] += 1
+            b_0_30["amount"] += res
+        elif days_overdue <= 60:
+            b_30_60["count"] += 1
+            b_30_60["amount"] += res
+        else:
+            b_60_plus["count"] += 1
+            b_60_plus["amount"] += res
+
+    aging_breakdown = [
+        {"label": "Pas encore échues", "key": "not_due", "count": not_due["count"], "amount": round(not_due["amount"], 2)},
+        {"label": "0-30j de retard", "key": "overdue_0_30", "count": b_0_30["count"], "amount": round(b_0_30["amount"], 2)},
+        {"label": "30-60j de retard", "key": "overdue_30_60", "count": b_30_60["count"], "amount": round(b_30_60["amount"], 2)},
+        {"label": "60+j de retard", "key": "overdue_60_plus", "count": b_60_plus["count"], "amount": round(b_60_plus["amount"], 2)},
+    ]
+
+    return {
+        "total_amount": total_residual,
+        "total_count": total_count,
+        "aging_breakdown": aging_breakdown,
+        "overdue_60_plus_amount": round(b_60_plus["amount"], 2),
+        "overdue_30_60_amount": round(b_30_60["amount"], 2),
+    }
+
+
+def get_unpaid_invoices_amount() -> float:
+    return get_unpaid_invoices_data()["total_amount"]
+
+
 # ---------------------------------------------------------------------
-# Assemblage des 10 KPIs Canoniques
+# Assemblage des 11 KPIs Canoniques
 # ---------------------------------------------------------------------
 
 def get_kpis() -> list[KPI]:
-    """Recalcule les 10 KPIs en interrogeant Odoo en direct."""
+    """Recalcule les 11 KPIs en interrogeant Odoo en direct."""
     try:
         revenue = get_monthly_revenue(30)
     except Exception as e:
@@ -276,6 +349,12 @@ def get_kpis() -> list[KPI]:
         logger.error(f"Error calculating late orders: {e}")
         late_orders = 0
 
+    try:
+        unpaid_invoices = get_unpaid_invoices_amount()
+    except Exception as e:
+        logger.error(f"Error calculating unpaid invoices: {e}")
+        unpaid_invoices = 0.0
+
     return [
         KPI(id="revenue", label="Chiffre d'affaires (30j)", value=revenue, unit="MAD"),
         KPI(id="new_orders", label="Nouvelles commandes (30j)", value=orders_count, unit="commandes"),
@@ -292,5 +371,7 @@ def get_kpis() -> list[KPI]:
         KPI(id="stock_value", label="Valorisation du stock", value=stock_value, unit="MAD"),
         KPI(id="active_customers", label="Clients actifs (30j)", value=active_customers, unit="clients"),
         KPI(id="late_orders", label="Commandes en retard", value=late_orders, unit="commandes"),
+        KPI(id="unpaid_invoices", label="Factures impayées", value=unpaid_invoices, unit="MAD"),
     ]
+
 

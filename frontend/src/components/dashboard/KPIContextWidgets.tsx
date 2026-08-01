@@ -319,6 +319,53 @@ export function StockValueWidget({ data }: { data: any }) {
   );
 }
 
+export function UnpaidInvoicesWidget({ data }: { data: any }) {
+  if (!data || !data.aging_breakdown) return null;
+
+  const totalAmount = data.total_amount || 1;
+  const categories = [
+    { label: "Pas encore échues", key: "not_due", color: "bg-blue-500", textColor: "text-blue-700" },
+    { label: "0-30j de retard", key: "overdue_0_30", color: "bg-amber-400", textColor: "text-amber-800" },
+    { label: "30-60j de retard", key: "overdue_30_60", color: "bg-orange-500", textColor: "text-orange-800" },
+    { label: "60+j de retard", key: "overdue_60_plus", color: "bg-red-600", textColor: "text-red-800" },
+  ];
+
+  const breakdownMap = new Map(data.aging_breakdown.map((item: any) => [item.key, item]));
+
+  return (
+    <div className="h-full flex flex-col p-4 overflow-y-auto">
+      <div className="flex items-center justify-between gap-1.5 mb-3">
+        <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wide">Ventilation des impayés</h3>
+        <span className="text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">
+          {data.total_count} factures
+        </span>
+      </div>
+
+      <div className="flex-1 flex flex-col justify-center gap-3">
+        {categories.map((cat) => {
+          const item = breakdownMap.get(cat.key) || { amount: 0, count: 0 };
+          const pct = Math.min(100, Math.round((item.amount / totalAmount) * 100));
+
+          return (
+            <div key={cat.key} className="space-y-1">
+              <div className="flex justify-between text-xs font-bold text-slate-700">
+                <span className={cat.textColor}>{cat.label} ({item.count} fact.)</span>
+                <span>{item.amount.toLocaleString("fr-FR")} MAD</span>
+              </div>
+              <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full ${cat.color} transition-all duration-500`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function ActiveCustomersWidget({ data }: { data: any[] }) {
   if (!data) return null;
   const colors = ['text-yellow-500 bg-yellow-50 border-yellow-200', 'text-slate-400 bg-slate-50 border-slate-200', 'text-amber-600 bg-amber-50 border-amber-200'];
@@ -350,3 +397,4 @@ export function ActiveCustomersWidget({ data }: { data: any[] }) {
     </div>
   );
 }
+

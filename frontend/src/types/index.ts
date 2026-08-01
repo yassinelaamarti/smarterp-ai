@@ -12,7 +12,12 @@ export interface KPI {
   trend?: "up" | "down" | "stable";
   changePercent?: number;
   sourceData?: KPISourceData;
+  sampleSize?: number;
+  sampleWarningThreshold?: number;
+  sampleUnitLabel?: string;
+  criticality?: "normal" | "attention" | "critical";
 }
+
 
 export interface ChatMessage {
   id: string;

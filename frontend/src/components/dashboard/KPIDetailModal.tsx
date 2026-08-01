@@ -23,8 +23,10 @@ import {
   NewLeadsWidget,
   ConversionRateWidget,
   StockValueWidget,
-  ActiveCustomersWidget
+  ActiveCustomersWidget,
+  UnpaidInvoicesWidget
 } from "./KPIContextWidgets";
+
 
 interface KPIDetailModalProps {
   kpi: KPI;
@@ -197,10 +199,12 @@ export function KPIDetailModal({ kpi, onClose }: KPIDetailModalProps) {
                     {contextData.type === 'win_loss' && <ConversionRateWidget data={contextData.data} />}
                     {contextData.type === 'aging' && <StockValueWidget data={contextData.data} />}
                     {contextData.type === 'leaderboard' && <ActiveCustomersWidget data={contextData.data} />}
+                    {contextData.type === 'unpaid_breakdown' && <UnpaidInvoicesWidget data={contextData.data} />}
                   </>
                 )}
               </div>
             )}
+
             
           </div>
         </div>
