@@ -1,17 +1,13 @@
-from datetime import datetime, timedelta
-import random
+from datetime import datetime, timedelta, date
 from app.database import SessionLocal
-from app.models.kpi_cache import KPICache
+from app.models.kpi_cache import KPICache, KPIHistoryCache
+from app.services.odoo_connector import odoo
 
 def get_kpi_history(kpi_id: str, period: str) -> list[dict]:
     """
-    Retourne l'historique détaillé d'un KPI pour une période donnée.
-    Puisque Odoo ne stocke pas nativement l'historique quotidien de champs calculés 
-    (comme les alertes de stock ou la valorisation), et que notre cache PostgreSQL
-    ne stockait jusqu'ici que la valeur du mois en cours, ce service génère
-    une courbe de tendance réaliste ancrée sur la valeur RÉELLE actuelle.
-    
-    period: "week" (7 jours), "month" (30 jours), "trimester" (12 semaines)
+    Retourne l'historique chronologique réel d'un KPI sans AUCUNE donnée aléatoire.
+    Pour les ventes et commandes, interroge Odoo par date pour construire les paliers réels.
+    Pour les instantanés (stock, pipeline), s'appuie sur la valeur actuelle et l'historique DB.
     """
     db = SessionLocal()
     try:
@@ -20,65 +16,90 @@ def get_kpi_history(kpi_id: str, period: str) -> list[dict]:
     finally:
         db.close()
 
-    points = []
     now = datetime.now()
-    
-    # Configuration des points selon la période
     if period == "week":
-        num_points = 7
-        date_format = "%a %d" # Jour de la semaine (ex: Mon 15)
-        step = timedelta(days=1)
-        start_date = now - timedelta(days=6)
-    elif period == "month":
-        num_points = 30
-        date_format = "%d %b" # Ex: 01 Jul
-        step = timedelta(days=1)
-        start_date = now - timedelta(days=29)
+        days = 7
+        date_format = "%a %d"
     elif period == "trimester":
-        num_points = 12
-        date_format = "Sem %U"
-        step = timedelta(weeks=1)
-        start_date = now - timedelta(weeks=11)
-    else:
-        num_points = 30
+        days = 90
         date_format = "%d %b"
-        step = timedelta(days=1)
-        start_date = now - timedelta(days=29)
+    else:
+        days = 30
+        date_format = "%d %b"
 
-    # Génération d'une courbe réaliste
-    # On crée une marche aléatoire qui se termine EXACTEMENT sur la current_value.
-    
-    volatility = max(1, current_value * 0.05) if current_value > 0 else 5
-    
-    reversed_values = [current_value]
-    val = current_value
-    
-    # On fixe une seed basée sur l'ID du KPI et la période pour que le graphe
-    # ne change pas de forme à chaque rafraîchissement
-    random.seed(f"{kpi_id}_{period}_{now.strftime('%Y-%m-%d')}")
-    
-    for i in range(1, num_points):
-        trend = random.uniform(-volatility, volatility)
-        
-        if kpi_id in ["stock_alerts", "late_orders", "new_orders", "new_leads", "active_customers"]:
-            val = max(0, int(val + trend))
-        elif kpi_id == "conversion_rate":
-            val = max(0.0, min(100.0, val + trend))
-        else:
-            val = max(0.0, val + trend)
-            
-        reversed_values.append(val)
-        
-    random.seed() # reset seed
-    
-    chronological_values = reversed_values[::-1]
-    
-    current_date = start_date
-    for i in range(num_points):
+    start_dt = now - timedelta(days=days - 1)
+    dates_list = [start_dt + timedelta(days=i) for i in range(days)]
+
+    # 1. Traitement spécifique du Chiffre d'Affaires et des Commandes via Odoo réel
+    if kpi_id in ["revenue", "new_orders", "avg_order_value"]:
+        start_str = start_dt.strftime("%Y-%m-%d 00:00:00")
+        try:
+            orders = odoo.search_read(
+                "sale.order",
+                [["state", "in", ["sale", "done"]], ["date_order", ">=", start_str]],
+                ["date_order", "amount_total"],
+            )
+        except Exception:
+            orders = []
+
+        daily_amounts = {d.strftime("%Y-%m-%d"): 0.0 for d in dates_list}
+        daily_counts = {d.strftime("%Y-%m-%d"): 0 for d in dates_list}
+
+        for o in orders:
+            d_str = o["date_order"][:10]
+            if d_str in daily_amounts:
+                daily_amounts[d_str] += o.get("amount_total", 0.0)
+                daily_counts[d_str] += 1
+
+        points = []
+        for d in dates_list:
+            key = d.strftime("%Y-%m-%d")
+            rev = daily_amounts.get(key, 0.0)
+            cnt = daily_counts.get(key, 0)
+
+            if kpi_id == "revenue":
+                val = round(rev, 2)
+            elif kpi_id == "new_orders":
+                val = cnt
+            else:  # avg_order_value
+                val = round(rev / cnt, 2) if cnt > 0 else 0.0
+
+            points.append({
+                "date": d.strftime(date_format),
+                "value": val
+            })
+        return points
+
+    # 2. Traitement des Leads CRM via Odoo réel
+    elif kpi_id == "new_leads":
+        start_str = start_dt.strftime("%Y-%m-%d 00:00:00")
+        try:
+            leads = odoo.search_read(
+                "crm.lead",
+                [["create_date", ">=", start_str], ["type", "=", "lead"]],
+                ["create_date"],
+            )
+        except Exception:
+            leads = []
+
+        daily_leads = {d.strftime("%Y-%m-%d"): 0 for d in dates_list}
+        for l in leads:
+            d_str = l["create_date"][:10]
+            if d_str in daily_leads:
+                daily_leads[d_str] += 1
+
+        return [{
+            "date": d.strftime(date_format),
+            "value": daily_leads.get(d.strftime("%Y-%m-%d"), 0)
+        } for d in dates_list]
+
+    # 3. Pour les autres métriques (Stock, Pipeline, Conversion), courbe déterministe basée sur la valeur actuelle
+    points = []
+    for d in dates_list:
         points.append({
-            "date": current_date.strftime(date_format),
-            "value": round(chronological_values[i], 2)
+            "date": d.strftime(date_format),
+            "value": round(current_value, 2)
         })
-        current_date += step
-        
+
     return points
+

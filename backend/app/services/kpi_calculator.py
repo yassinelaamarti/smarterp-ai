@@ -21,18 +21,18 @@ _KPI_ORDER = [
 _KPI_SOURCE_META = {
     "revenue": {
         "model": "sale.order",
-        "domain": "[('state', 'in', ['sale', 'done']), ('date_order', '>=', début_du_mois)]",
-        "formula": "Somme de amount_total des commandes du mois en cours"
+        "domain": "[('state', 'in', ['sale', 'done']), ('date_order', '>=', aujourd'hui - 30j)]",
+        "formula": "Somme de amount_total des commandes sur la fenêtre glissante de 30 jours"
     },
     "new_orders": {
         "model": "sale.order",
-        "domain": "[('date_order', '>=', début_du_mois)]",
-        "formula": "Nombre total de commandes passées ce mois-ci"
+        "domain": "[('date_order', '>=', aujourd'hui - 30j)]",
+        "formula": "Nombre total de commandes passées sur les 30 derniers jours"
     },
     "avg_order_value": {
         "model": "sale.order",
-        "domain": "Calculé à partir du Chiffre d'affaires et du Nombre de nouvelles commandes du mois",
-        "formula": "Chiffre d'affaires mensuel / Nombre de commandes mensuelles"
+        "domain": "Calculé à partir du CA (30j) et du Nombre de commandes (30j)",
+        "formula": "Chiffre d'affaires (30j) / Nombre de commandes (30j)"
     },
     "stock_alerts": {
         "model": "product.product",
@@ -41,13 +41,13 @@ _KPI_SOURCE_META = {
     },
     "new_leads": {
         "model": "crm.lead",
-        "domain": "[('create_date', '>=', début_du_mois), ('type', '=', 'lead')]",
-        "formula": "Nombre total de pistes (leads) commerciales créées ce mois-ci"
+        "domain": "[('create_date', '>=', aujourd'hui - 30j), ('type', '=', 'lead')]",
+        "formula": "Nombre total de pistes (leads) commerciales créées sur les 30 derniers jours"
     },
     "conversion_rate": {
         "model": "crm.lead",
-        "domain": "[('create_date', '>=', début_du_mois), ('type', '=', 'opportunity')]",
-        "formula": "(Nombre d'opportunités gagnées ce mois-ci / Nombre total d'opportunités créées ce mois-ci) * 100"
+        "domain": "[('create_date', '>=', aujourd'hui - 30j), ('type', '=', 'opportunity')]",
+        "formula": "(Opportunités gagnées 30j / Total opportunités créées 30j) * 100"
     },
     "pipeline_value": {
         "model": "crm.lead",
@@ -61,13 +61,13 @@ _KPI_SOURCE_META = {
     },
     "active_customers": {
         "model": "sale.order",
-        "domain": "[('date_order', '>=', début_du_mois)]",
-        "formula": "Nombre de clients uniques (partner_id distincts) ayant passé au moins une commande ce mois-ci"
+        "domain": "[('date_order', '>=', aujourd'hui - 30j)]",
+        "formula": "Nombre de clients uniques (partner_id distincts) ayant passé au moins une commande sur 30 jours"
     },
     "late_orders": {
-        "model": "sale.order",
-        "domain": "[('state', 'in', ['sale', 'done']), ('commitment_date', '<', aujourd'hui)]",
-        "formula": "Nombre de commandes confirmées dont la date de livraison prévue (commitment_date) est dépassée"
+        "model": "stock.picking",
+        "domain": "[('picking_type_id.code', '=', 'outgoing'), ('state', 'not in', ['done', 'cancel']), ('scheduled_date', '<', aujourd'hui)]",
+        "formula": "Nombre de bons de livraison clients non encore livrés dont la date de livraison prévue est dépassée"
     }
 }
 
@@ -91,8 +91,8 @@ def get_kpis() -> list[KPI]:
     db: Session = SessionLocal()
     try:
         rows = {r.id: r for r in db.query(KPICache).all()}
+        # Filtre STRICTEMENT sur la liste canonique des 10 KPIs, exclut les orphelins obsolètes
         ordered = [rows[k] for k in _KPI_ORDER if k in rows]
-        ordered += [r for k, r in rows.items() if k not in _KPI_ORDER]
 
         prev_month = previous_month_str()
         history = (
@@ -125,6 +125,7 @@ def get_kpis() -> list[KPI]:
         return result
     finally:
         db.close()
+
 
 
 def get_monthly_revenue_history(months: int = 6) -> list[dict]:

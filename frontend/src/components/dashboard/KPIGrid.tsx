@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useKpis } from "@/hooks/useKpis";
-import { KPICard } from "./KPICard";
+import { MetricCard } from "./MetricCard";
 import { KPIDetailModal } from "./KPIDetailModal";
 import type { KPI } from "@/types";
 
@@ -16,7 +16,7 @@ export function KPIGrid() {
         {Array.from({ length: 10 }).map((_, i) => (
           <div
             key={i}
-            className="h-28 animate-pulse rounded-xl border border-gray-200 bg-gray-100"
+            className="h-36 animate-pulse rounded-2xl border border-slate-200 bg-slate-100"
           />
         ))}
       </div>
@@ -35,9 +35,9 @@ export function KPIGrid() {
 
   return (
     <>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {kpis?.map((kpi) => (
-          <KPICard key={kpi.id} kpi={kpi} onClick={setSelectedKpi} />
+          <MetricCard key={kpi.id} kpi={kpi} onClick={setSelectedKpi} />
         ))}
       </div>
       
@@ -47,3 +47,4 @@ export function KPIGrid() {
     </>
   );
 }
+

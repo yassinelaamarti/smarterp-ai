@@ -399,16 +399,18 @@ def generate_recommendations(
             except Exception as e:
                 logger.error(f"Erreur lors de la lecture du stock Odoo: {e}")
         else:
-            domain = _resolve_domain_from_entity_key(f"anomaly_{alert.id}")
+            ekey = alert.id if alert.id.startswith("anomaly_") or alert.id.startswith("kpi_") else f"anomaly_{alert.id}"
+            domain = _resolve_domain_from_entity_key(ekey)
 
             all_anomalies.append({
-                "source_id": f"anomaly_{alert.id}",
-                "entity_key": f"anomaly_{alert.id}",
+                "source_id": ekey,
+                "entity_key": ekey,
                 "source_type": RecommendationSource.anomaly if alert.is_anomaly else RecommendationSource.kpi_alert,
                 "domain": domain,
                 "data": alert.source_data.model_dump() if alert.source_data else {},
                 "alert": alert
             })
+
 
     # 1.5 Fusion par entity_key et détermination déterministe du domaine
     grouped_by_entity = {}

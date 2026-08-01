@@ -21,12 +21,46 @@ from app.schemas.kpi import KPI
 logger = logging.getLogger(__name__)
 
 
+CANONICAL_KPI_IDS = {
+    "revenue", "new_orders", "avg_order_value",
+    "stock_alerts", "new_leads", "conversion_rate",
+    "pipeline_value", "stock_value", "active_customers", "late_orders",
+}
+
+
+def purge_orphan_kpi_cache(db: Session, dry_run: bool = False) -> list[str]:
+    """
+    Identifie et purge les clés obsolètes orphelines dans la table KPICache et KPIHistoryCache.
+    Si dry_run=True, logge les clés trouvées sans effectuer la suppression.
+    """
+    rows = db.query(KPICache).all()
+    orphan_ids = [r.id for r in rows if r.id not in CANONICAL_KPI_IDS]
+
+    if orphan_ids:
+        if dry_run:
+            logger.info(f"[DRY-RUN PURGE] Clés orphelines détectées dans KPICache (non supprimées) : {orphan_ids}")
+        else:
+            logger.info(f"Purge des clés orphelines du cache PostgreSQL : {orphan_ids}")
+            db.query(KPICache).filter(KPICache.id.in_(orphan_ids)).delete(synchronize_session=False)
+            db.query(KPIHistoryCache).filter(KPIHistoryCache.kpi_id.in_(orphan_ids)).delete(synchronize_session=False)
+            db.commit()
+    else:
+        logger.info("Aucune clé orpheline trouvée dans le cache PostgreSQL.")
+
+    return orphan_ids
+
+
 def sync_kpis(db: Session) -> list[KPI]:
     kpis = odoo_kpi_reader.get_kpis()
     for kpi in kpis:
         db.merge(KPICache(id=kpi.id, label=kpi.label, value=kpi.value, unit=kpi.unit))
     db.commit()
+
+    # Nettoyage des clés orphelines obsolètes (ex: crm_pipeline, delayed_orders, stock_valuation)
+    purge_orphan_kpi_cache(db, dry_run=False)
+
     return kpis
+
 
 
 def sync_kpi_history(db: Session, kpis: list[KPI]) -> None:
