@@ -2,30 +2,38 @@
 Calcule un score de santé global (0-100) à partir des KPIs et alertes déjà
 disponibles en cache — aucun nouvel appel Odoo, calcul quasi instantané.
 
-Principe : on part de 100, et chaque signal négatif (alerte, tendance en
-baisse) retire des points ; chaque signal positif (tendance en hausse) en
-ajoute un peu. Le détail (factors) est renvoyé pour que l'utilisateur (et
-l'agent IA) puissent expliquer précisément d'où vient le score.
+Méthodologie avec rendements décroissants :
+1. Déduplication par KPI (conserve le signal le plus sévère pour chaque KPI).
+2. Tri des pénalités par ordre de gravité décroissante.
+3. Application de coefficients d'amortissement dégressifs (100%, 70%, 50%, 35%, 25%, 15%)
+   pour éviter qu'un cumul d'anomalies mineures n'écrase artificiellement le score à 0.
 """
 
 from app.schemas.health_score import HealthScore, HealthScoreFactor
 from app.services.kpi_calculator import get_kpis
 from app.services.alert_engine import evaluate_alerts
+from app.database import SessionLocal
 
 CRITICAL_ALERT_PENALTY = 15
 WARNING_ALERT_PENALTY = 5
 MAX_REVENUE_PENALTY = 15
 MAX_REVENUE_BONUS = 5
 
-
+# Mapping exhaustif de tous les KPIs vers leur domaine métier principal
 KPI_CATEGORIES = {
+    # Finance
     "revenue": "finance",
     "new_orders": "finance",
+    "unpaid_invoices": "finance",
+    # Opérations
     "stock_alerts": "operations",
+    "stock_value": "operations",
     "late_orders": "operations",
+    # CRM & Clients
     "conversion_rate": "crm",
     "pipeline_value": "crm",
     "active_customers": "crm",
+    "new_leads": "crm",
 }
 
 CATEGORY_PENALTIES = {
@@ -36,55 +44,81 @@ CATEGORY_PENALTIES = {
 
 DEFAULT_PENALTIES = {"critical": 15, "warning": 5, "label": "Général"}
 
+# Facteurs de pondération dégressive par rang de gravité (Pondération à rendements décroissants)
+DEGRESSIVE_WEIGHTS = [1.0, 0.70, 0.50, 0.35, 0.25, 0.15]
 
-from app.database import SessionLocal
 
 def compute_health_score() -> HealthScore:
     db = SessionLocal()
     try:
         kpis = get_kpis()
-        alerts = evaluate_alerts(kpis, db=db)
+        raw_alerts = evaluate_alerts(kpis, db=db)
     finally:
         db.close()
 
+    # ÉTAPE 1 : Déduplication par KPI (Conserver uniquement le signal le plus sévère pour chaque KPI)
+    dedup_map = {}
+    for alert in raw_alerts:
+        kpi_id = alert.kpi_id
+        if kpi_id not in dedup_map:
+            dedup_map[kpi_id] = alert
+        else:
+            existing = dedup_map[kpi_id]
+            # Priorité à critical sur warning, puis aux anomalies IA
+            if alert.severity == "critical" and existing.severity != "critical":
+                dedup_map[kpi_id] = alert
+            elif alert.severity == existing.severity and alert.is_anomaly:
+                dedup_map[kpi_id] = alert
+
+    dedup_alerts = list(dedup_map.values())
+
+    # ÉTAPE 2 : Préparation et calcul de la pénalité de base pour chaque alerte
+    penalty_items = []
+    for alert in dedup_alerts:
+        category = KPI_CATEGORIES.get(alert.kpi_id)
+        penalties = CATEGORY_PENALTIES.get(category, DEFAULT_PENALTIES) if category else DEFAULT_PENALTIES
+        base_val = penalties.get(alert.severity, 5)
+
+        penalty_items.append({
+            "alert": alert,
+            "base_penalty": base_val,
+            "cat_label": penalties["label"],
+        })
+
+    # Trier par pénalité de base décroissante (les alertes les plus lourdes en premier)
+    penalty_items.sort(key=lambda x: x["base_penalty"], reverse=True)
+
+    # ÉTAPE 3 : Application des coefficients d'amortissement dégressifs
     score = 100.0
     factors: list[HealthScoreFactor] = []
 
-    # Calcul des pénalités basées sur les catégories d'alertes actives
-    for alert in alerts:
-        kpi_id = alert.kpi_id
-        severity = alert.severity  # 'critical' or 'warning'
-        
-        category = KPI_CATEGORIES.get(kpi_id)
-        penalties = CATEGORY_PENALTIES.get(category, DEFAULT_PENALTIES) if category else DEFAULT_PENALTIES
-        penalty_value = penalties.get(severity, 5)
-        
-        impact = -penalty_value
+    for i, item in enumerate(penalty_items):
+        weight = DEGRESSIVE_WEIGHTS[i] if i < len(DEGRESSIVE_WEIGHTS) else 0.15
+        impact = round(-item["base_penalty"] * weight, 1)
         score += impact
-        
-        cat_label = penalties["label"]
+
         factors.append(HealthScoreFactor(
-            label=f"[{cat_label}] {alert.message}",
+            label=f"[{item['cat_label']}] {item['alert'].message}",
             impact=impact,
         ))
 
-    # Bonus/Pénalité sur l'évolution du Chiffre d'Affaires (CA)
+    # ÉTAPE 4 : Prise en compte du Bonus sur l'évolution du Chiffre d'Affaires
     revenue = next((k for k in kpis if k.id == "revenue"), None)
-    if revenue and revenue.change_percent is not None:
-        if revenue.change_percent < 0:
-            # La baisse est déjà capturée par l'alerte de baisse du CA si elle dépasse les seuils,
-            # mais on peut ajouter un ajustement fin ou un bonus en cas de hausse.
-            pass
-        elif revenue.change_percent > 0:
-            impact = round(min(revenue.change_percent * 0.2, MAX_REVENUE_BONUS), 1)
-            score += impact
-            factors.append(HealthScoreFactor(
-                label=f"[Finance] Chiffre d'affaires en hausse de {revenue.change_percent}%",
-                impact=impact,
-            ))
+    if revenue and revenue.change_percent is not None and revenue.change_percent > 0:
+        impact = round(min(revenue.change_percent * 0.2, MAX_REVENUE_BONUS), 1)
+        score += impact
+        factors.append(HealthScoreFactor(
+            label=f"[Finance] Chiffre d'affaires en hausse de {revenue.change_percent}%",
+            impact=impact,
+        ))
 
+    # ÉTAPE 5 : Tri des facteurs par impact (les pénalités les plus importantes en premier)
+    factors.sort(key=lambda f: f.impact)
+
+    # Plafonnement final entre 0 et 100
     score_int = max(0, min(100, round(score)))
 
+    # Attribution du libellé de statut
     if score_int >= 80:
         label = "Excellente santé"
     elif score_int >= 60:
@@ -98,4 +132,3 @@ def compute_health_score() -> HealthScore:
         factors.append(HealthScoreFactor(label="Aucun signal notable détecté", impact=0))
 
     return HealthScore(score=score_int, label=label, factors=factors)
-
