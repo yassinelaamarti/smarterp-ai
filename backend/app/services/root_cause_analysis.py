@@ -608,17 +608,30 @@ Consignes :
     abs_pct = abs(delta_total_pct)
     factors_str = []
     for b in breakdown[:3]:
-        dim_label = {"region": "la région", "product": "le produit", "sales_rep": "le commercial", "customer_category": "la catégorie client"}.get(b['dimension'], b['dimension'])
-        factors_str.append(f"{dim_label} '{b['segment']}' ({b['contribution_pct']}%)")
+        dim_label = {
+            "region": "la région",
+            "product": "le produit",
+            "sales_rep": "le commercial",
+            "customer_category": "le client",
+            "customer": "le client",
+        }.get(b["dimension"], b["dimension"])
+
+        clean_seg = b["segment"]
+        for prefix in ["Client : ", "Catégorie : ", "Étape : ", "Commercial : ", "Région : ", "Produit : "]:
+            if clean_seg.startswith(prefix):
+                clean_seg = clean_seg[len(prefix):]
+
+        factors_str.append(f"{dim_label} '{clean_seg}' ({b['contribution_pct']}%)")
 
     factors_text = ", ".join(factors_str) if factors_str else "divers facteurs"
     fallback_text = f"La {sign} de {abs_pct}% du {kpi_name} s'explique principalement par {factors_text}."
     if residual_pct > 40.0:
-        fallback_text += f" Une part importante ({residual_pct}%) de la variation reste toutefois réparties sur d'autres facteurs secondaires."
+        fallback_text += f" Une part importante ({residual_pct}%) de la variation reste toutefois répartie sur d'autres facteurs secondaires."
     else:
         fallback_text += " Ces éléments couvrent la presque totalité de la variation observée."
 
     return fallback_text
+
 
 
 def get_root_cause_analysis(kpi_id: str, current_value: float, change_percent: float | None) -> list[dict]:

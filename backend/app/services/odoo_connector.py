@@ -40,11 +40,15 @@ class OdooConnector:
         Exemple : search_read("sale.order", [["state", "=", "sale"]], ["amount_total"])
         """
         uid = self._get_uid()
+        kwargs = {"context": {"lang": "fr_FR"}}
+        if limit:
+            kwargs["limit"] = limit
+
         return self._models().execute_kw(
             self.db, uid, self.password,
             model, "search_read",
             [domain, fields],
-            {"limit": limit} if limit else {},
+            kwargs,
         )
 
     def search_count(self, model: str, domain: list) -> int:
@@ -54,7 +58,9 @@ class OdooConnector:
             self.db, uid, self.password,
             model, "search_count",
             [domain],
+            {"context": {"lang": "fr_FR"}},
         )
+
 
     def create(self, model: str, vals: dict) -> int:
         """

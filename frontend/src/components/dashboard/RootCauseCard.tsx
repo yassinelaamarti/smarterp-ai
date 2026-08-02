@@ -14,7 +14,8 @@ const DIMENSION_LABELS: Record<string, string> = {
   region: "Région",
   product: "Produit",
   sales_rep: "Commercial",
-  customer_category: "Catégorie client",
+  customer_category: "Client",
+  customer: "Client",
 };
 
 export function RootCauseCard({ anomalyId, defaultExpanded = true }: RootCauseCardProps) {
@@ -98,6 +99,15 @@ export function RootCauseCard({ anomalyId, defaultExpanded = true }: RootCauseCa
                 const dimName = DIMENSION_LABELS[item.dimension] || item.dimension;
                 const absContrib = Math.min(100, Math.abs(item.contributionPct));
 
+                let cleanSegment = item.segment;
+                const prefixes = ["Client : ", "Catégorie : ", "Étape : ", "Commercial : ", "Région : ", "Produit : "];
+                for (const p of prefixes) {
+                  if (cleanSegment.startsWith(p)) {
+                    cleanSegment = cleanSegment.slice(p.length);
+                    break;
+                  }
+                }
+
                 return (
                   <div key={index} className="space-y-1">
                     <div className="flex items-center justify-between text-xs font-semibold">
@@ -105,8 +115,9 @@ export function RootCauseCard({ anomalyId, defaultExpanded = true }: RootCauseCa
                         <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 font-medium">
                           {dimName}
                         </span>
-                        {item.segment}
+                        {cleanSegment}
                       </span>
+
                       <span className={cn("font-bold font-mono text-xs", isItemPositive ? "text-emerald-600" : "text-rose-600")}>
                         {isItemPositive ? `+${item.delta}` : item.delta} ({item.contributionPct > 0 ? `+${item.contributionPct}%` : `${item.contributionPct}%`})
                       </span>
