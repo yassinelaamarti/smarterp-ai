@@ -56,8 +56,9 @@ export function ConversationSidebar() {
         )}
         {!isLoading && conversations.length === 0 && (
           <p className="px-2 py-4 text-center text-xs text-slate-400">
-            Aucune conversation pour l&apos;instant.
+            Aucune conversation pour l'instant.
           </p>
+
         )}
 
         {conversations.map((c) => {

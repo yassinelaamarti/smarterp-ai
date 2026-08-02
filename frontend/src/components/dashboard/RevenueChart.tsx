@@ -27,7 +27,7 @@ export function RevenueChart() {
   if (isError) {
     return (
       <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
-        Impossible de charger l&apos;historique du CA : {(error as Error)?.message ?? "erreur inconnue"}.
+        Impossible de charger l'historique du CA : {(error as Error)?.message ?? "erreur inconnue"}.
       </div>
     );
   }
@@ -36,8 +36,9 @@ export function RevenueChart() {
     <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm hover:border-slate-300 transition-colors duration-300">
       <div className="mb-6">
         <h3 className="text-sm font-bold uppercase tracking-wider text-slate-800">
-          Évolution du chiffre d&apos;affaires
+          Évolution du chiffre d'affaires
         </h3>
+
         <p className="mt-1 text-xs text-slate-500 font-medium">
           Revenus consolidés mensuels sur les 6 derniers mois
         </p>

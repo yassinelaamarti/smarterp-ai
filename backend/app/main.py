@@ -135,6 +135,14 @@ async def lifespan(app: FastAPI):
                 db.commit()
                 logger.info("Added missing revenue_monthly_goal setting.")
 
+            unpaid_warn = db.query(AlertSetting).filter(AlertSetting.key == "unpaid_invoices_60_plus_warning").first()
+            if not unpaid_warn:
+                db.add(AlertSetting(key="unpaid_invoices_60_plus_warning", value=20.0, label="Impayés >60j (Avertissement %)"))
+                db.add(AlertSetting(key="unpaid_invoices_60_plus_critical", value=40.0, label="Impayés >60j (Critique %)"))
+                db.commit()
+                logger.info("Added missing unpaid_invoices settings.")
+
+
         # Seeder l'historique de démo s'il est vide
         history_exists = db.query(KPIHistoryCache).first()
         if not history_exists:

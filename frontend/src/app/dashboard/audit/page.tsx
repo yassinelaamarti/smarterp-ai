@@ -83,14 +83,14 @@ export default function AuditPage() {
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Audit des Actions IA</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Consultez l&apos;historique complet de traçabilité et d&apos;exécution des recommandations SmartERP AI sur Odoo.
+          Consultez l'historique complet de traçabilité et d'exécution des recommandations SmartERP AI sur Odoo.
         </p>
       </div>
 
       {error && (
         <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           <ShieldAlert className="h-4 w-4 flex-shrink-0" />
-          <span>Erreur de chargement de l&apos;audit : {(error as Error).message}</span>
+          <span>Erreur de chargement de l'audit : {(error as Error).message}</span>
         </div>
       )}
 
@@ -100,7 +100,7 @@ export default function AuditPage() {
           <div className="flex items-center gap-2">
             <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              Logs d&apos;activité
+              Logs d'activité
             </h2>
           </div>
           <span className="text-xs text-slate-450 font-bold">
@@ -121,13 +121,14 @@ export default function AuditPage() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-wider">
-                  <th className="py-3 px-5">Date d&apos;action</th>
+                  <th className="py-3 px-5">Date d'action</th>
                   <th className="py-3 px-5">Décision / Titre</th>
-                  <th className="py-3 px-5">Type d&apos;action</th>
+                  <th className="py-3 px-5">Type d'action</th>
                   <th className="py-3 px-5">Statut</th>
                   <th className="py-3 px-5">Opérateur</th>
                   <th className="py-3 px-5">Paramètres Odoo</th>
                 </tr>
+
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs sm:text-sm">
                 {auditLogs.map((log) => (

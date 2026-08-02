@@ -229,7 +229,8 @@ export function NewLeadsWidget({ data }: { data: any[] }) {
   return (
     <div className="h-full flex flex-col p-4">
       <div className="flex items-center justify-center gap-1.5 mb-2 relative group">
-        <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Sources d&apos;acquisition</h3>
+        <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Sources d'acquisition</h3>
+
         <HelpCircle className="w-4 h-4 text-slate-400 cursor-help hover:text-blue-500 transition-colors" />
         <div className="absolute top-full mt-2 hidden group-hover:block w-48 bg-slate-800 text-white text-xs rounded p-2 z-50 text-center shadow-lg pointer-events-none">
           Analyse de la provenance des nouveaux prospects (UTM tracking via Odoo CRM).

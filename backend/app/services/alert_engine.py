@@ -52,6 +52,27 @@ from sqlalchemy.orm import Session
 from app.models.kpi_cache import KPIHistoryCache
 from app.services.date_utils import current_month_str
 
+def _check_unpaid_invoices(kpi: KPI, settings: dict[str, float]) -> RuleResult:
+    critical = settings.get("unpaid_invoices_60_plus_critical", 40.0)
+    warning = settings.get("unpaid_invoices_60_plus_warning", 20.0)
+
+    pct_60 = 0.0
+    if kpi.context_data and isinstance(kpi.context_data, dict):
+        data = kpi.context_data.get("data", {})
+        if isinstance(data, dict):
+            breakdown = data.get("aging_breakdown", [])
+            tot = data.get("total_amount", 1) or 1
+            item_60 = next((b for b in breakdown if isinstance(b, dict) and b.get("key") == "overdue_60_plus"), None)
+            if item_60:
+                pct_60 = (item_60.get("amount", 0) / tot) * 100.0
+
+    if pct_60 >= critical:
+        return "critical", f"Encours très ancien élevé : {pct_60:.1f}% des factures impayées ont plus de 60 jours de retard."
+    if pct_60 >= warning:
+        return "warning", f"Encours ancien à surveiller : {pct_60:.1f}% des factures impayées ont plus de 60 jours de retard."
+    return None
+
+
 def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, db: Session | None = None) -> list[Alert]:
     if settings is None:
         settings = {
@@ -59,6 +80,8 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
             "stock_warning": 0.0,
             "late_orders_critical": 5.0,
             "late_orders_warning": 0.0,
+            "unpaid_invoices_60_plus_critical": 40.0,
+            "unpaid_invoices_60_plus_warning": 20.0,
             "revenue_critical": -15.0,
             "revenue_warning": -5.0,
             "new_orders_critical": -30.0,
@@ -84,6 +107,11 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
             critical = settings.get("late_orders_critical", 5.0)
             warning = settings.get("late_orders_warning", 0.0)
             threshold_info = f"Seuils configurés : Critique > {critical}, Avertissement > {warning}"
+        elif kpi.id == "unpaid_invoices":
+            result = _check_unpaid_invoices(kpi, settings)
+            critical = settings.get("unpaid_invoices_60_plus_critical", 40.0)
+            warning = settings.get("unpaid_invoices_60_plus_warning", 20.0)
+            threshold_info = f"Seuils configurés pour impayés >60j : Critique >= {critical}%, Avertissement >= {warning}%"
         elif kpi.id == "revenue":
             critical = settings.get("revenue_critical", -15.0)
             warning = settings.get("revenue_warning", -5.0)
@@ -111,6 +139,7 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
             threshold_info = f"Seuils de baisse configurés : Critique <= {critical}%, Avertissement <= {warning}%"
         else:
             continue
+
 
         if result:
             severity, message = result

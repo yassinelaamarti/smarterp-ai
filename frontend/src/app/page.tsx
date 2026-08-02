@@ -74,8 +74,9 @@ export default function Home() {
               SmartERP AI se connecte à votre Odoo en lecture seule et transforme vos
               ventes, votre CRM et votre stock en un tableau de bord clair — avec un
               agent IA qui explique pourquoi vos chiffres évoluent, pas seulement ce
-              qu&apos;ils valent.
+              qu'ils valent.
             </p>
+
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
@@ -157,10 +158,11 @@ export default function Home() {
             85<span className="text-blue-600">%</span>
           </p>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-slate-500">
-            des PME marocaines utilisant Odoo n&apos;ont aujourd&apos;hui aucun outil d&apos;analyse
+            des PME marocaines utilisant Odoo n'ont aujourd'hui aucun outil d'analyse
             IA pour exploiter leurs données de vente, de CRM ou de stock. SmartERP AI
             comble ce manque, sans concurrent local direct.
           </p>
+
         </div>
       </section>
 

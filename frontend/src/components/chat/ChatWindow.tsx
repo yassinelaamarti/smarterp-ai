@@ -248,8 +248,9 @@ export function ChatWindow() {
                 Assistant Virtuel SmartERP AI
               </h2>
               <p className="mt-2 text-xs sm:text-sm text-slate-500 font-medium max-w-md leading-relaxed">
-                Posez vos questions métier en langage naturel ou commencez par l&apos;une des suggestions ci-dessous :
+                Posez vos questions métier en langage naturel ou commencez par l'une des suggestions ci-dessous :
               </p>
+
 
               <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
                 {SUGGESTIONS.map((s, idx) => {

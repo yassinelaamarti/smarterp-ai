@@ -350,7 +350,7 @@ export function AISummaryModal({ isOpen, onClose }: AISummaryModalProps) {
               <div className="text-center">
                 <p className="text-sm font-bold text-slate-700">Génération de la synthèse en cours...</p>
                 <p className="text-xs text-slate-400 font-medium mt-1">
-                  L&apos;agent IA étudie l&apos;évolution du CA, de la logistique et de votre CRM...
+                  L'agent IA étudie l'évolution du CA, de la logistique et de votre CRM...
                 </p>
               </div>
               
@@ -503,7 +503,8 @@ export function AISummaryModal({ isOpen, onClose }: AISummaryModalProps) {
                 className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-md shadow-blue-500/10 hover:from-blue-500 hover:to-indigo-500 transition-all cursor-pointer"
               >
                 <MessageSquare className="h-4 w-4" />
-                <span>Discuter avec l&apos;IA</span>
+                <span>Discuter avec l'IA</span>
+
               </button>
             </div>
           </div>
