@@ -57,20 +57,23 @@ def _check_unpaid_invoices(kpi: KPI, settings: dict[str, float]) -> RuleResult:
     warning = settings.get("unpaid_invoices_60_plus_warning", 20.0)
 
     pct_60 = 0.0
-    if kpi.context_data and isinstance(kpi.context_data, dict):
-        data = kpi.context_data.get("data", {})
-        if isinstance(data, dict):
-            breakdown = data.get("aging_breakdown", [])
-            tot = data.get("total_amount", 1) or 1
-            item_60 = next((b for b in breakdown if isinstance(b, dict) and b.get("key") == "overdue_60_plus"), None)
-            if item_60:
-                pct_60 = (item_60.get("amount", 0) / tot) * 100.0
+    try:
+        from app.services.odoo_kpi_reader import get_unpaid_invoices_data
+        unpaid_data = get_unpaid_invoices_data()
+        breakdown = unpaid_data.get("aging_breakdown", [])
+        tot = unpaid_data.get("total_amount", 1) or 1
+        item_60 = next((b for b in breakdown if isinstance(b, dict) and b.get("key") == "overdue_60_plus"), None)
+        if item_60:
+            pct_60 = (item_60.get("amount", 0) / tot) * 100.0
+    except Exception as e:
+        logger.warning(f"Impossible de lire le détail des impayés pour l'évaluation des alertes: {e}")
 
     if pct_60 >= critical:
         return "critical", f"Encours très ancien élevé : {pct_60:.1f}% des factures impayées ont plus de 60 jours de retard."
     if pct_60 >= warning:
         return "warning", f"Encours ancien à surveiller : {pct_60:.1f}% des factures impayées ont plus de 60 jours de retard."
     return None
+
 
 
 def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, db: Session | None = None) -> list[Alert]:
