@@ -70,20 +70,306 @@ def _run_real_rca_decomposition(
     period_current: str,
     period_previous: str
 ) -> Optional[dict]:
-    if kpi_id not in ["revenue", "new_orders", "active_customers"]:
+    # Les ratios n'ont pas de décomposition par segment directe sur une table de transaction unique
+    if kpi_id in ["avg_order_value", "conversion_rate"]:
         return None
 
+    kpi_name = KPI_LABELS.get(kpi_id, kpi_id)
+    comp_id = settings.odoo_company_id
+
+    # A. Factures Impayées (Montant ou Nombre)
+    if kpi_id in ["unpaid_invoices", "unpaid_invoices_count"]:
+        invoices = odoo.search_read(
+            "account.move",
+            [
+                ["move_type", "=", "out_invoice"],
+                ["state", "=", "posted"],
+                ["payment_state", "in", ["not_paid", "partial"]],
+                ["company_id", "=", comp_id],
+            ],
+            ["name", "partner_id", "amount_residual", "invoice_user_id"],
+        ) or []
+
+        if not invoices:
+            return None
+
+        total_res = sum(i.get("amount_residual", 0.0) for i in invoices)
+        total_cnt = float(len(invoices))
+        delta_total = total_res if kpi_id == "unpaid_invoices" else total_cnt
+
+        part_map = {}
+        user_map = {}
+        for inv in invoices:
+            p_name = inv["partner_id"][1] if inv.get("partner_id") else "Client inconnu"
+            u_name = inv["invoice_user_id"][1] if inv.get("invoice_user_id") else "Non assigné"
+            val = inv.get("amount_residual", 0.0) if kpi_id == "unpaid_invoices" else 1.0
+
+            part_map[p_name] = part_map.get(p_name, 0.0) + val
+            user_map[u_name] = user_map.get(u_name, 0.0) + val
+
+        all_segments = []
+        for p, val in part_map.items():
+            all_segments.append({"dimension": "customer_category", "segment": f"Client : {p}", "delta": val})
+        for u, val in user_map.items():
+            all_segments.append({"dimension": "sales_rep", "segment": f"Commercial : {u}", "delta": val})
+
+        all_segments.sort(key=lambda x: abs(x["delta"]), reverse=True)
+        top3 = all_segments[:3]
+
+        breakdown = []
+        sum_pct = 0.0
+        for s in top3:
+            contrib = round((s["delta"] / delta_total) * 100.0, 1) if delta_total > 0 else 0.0
+            sum_pct += contrib
+            breakdown.append({
+                "dimension": s["dimension"],
+                "segment": s["segment"],
+                "delta": round(s["delta"], 2),
+                "contribution_pct": contrib,
+            })
+
+        residual_pct = round(max(0.0, 100.0 - sum_pct), 1)
+        return {
+            "kpi_name": kpi_name,
+            "period_current": period_current,
+            "period_previous": period_previous,
+            "delta_total": round(delta_total, 2),
+            "delta_total_pct": round(change_percent or 0.0, 1),
+            "breakdown": breakdown,
+            "residual_pct": residual_pct,
+        }
+
+    # B. Commandes en Retard
+    if kpi_id == "late_orders":
+        now_str = date.today().strftime("%Y-%m-%d 23:59:59")
+        late_pickings = odoo.search_read(
+            "stock.picking",
+            [
+                ["picking_type_id.code", "=", "outgoing"],
+                ["state", "not in", ["done", "cancel"]],
+                ["scheduled_date", "<", now_str],
+                ["company_id", "=", comp_id],
+            ],
+            ["name", "partner_id", "user_id"],
+        ) or []
+
+        if not late_pickings:
+            return None
+
+        total_cnt = float(len(late_pickings))
+        part_map = {}
+        for p in late_pickings:
+            p_name = p["partner_id"][1] if p.get("partner_id") else "Client inconnu"
+            part_map[p_name] = part_map.get(p_name, 0.0) + 1.0
+
+        all_segments = []
+        for p, cnt in part_map.items():
+            all_segments.append({"dimension": "customer_category", "segment": f"Client : {p}", "delta": cnt})
+
+        all_segments.sort(key=lambda x: abs(x["delta"]), reverse=True)
+        top3 = all_segments[:3]
+
+        breakdown = []
+        sum_pct = 0.0
+        for s in top3:
+            contrib = round((s["delta"] / total_cnt) * 100.0, 1) if total_cnt > 0 else 0.0
+            sum_pct += contrib
+            breakdown.append({
+                "dimension": s["dimension"],
+                "segment": s["segment"],
+                "delta": round(s["delta"], 2),
+                "contribution_pct": contrib,
+            })
+
+        residual_pct = round(max(0.0, 100.0 - sum_pct), 1)
+        return {
+            "kpi_name": kpi_name,
+            "period_current": period_current,
+            "period_previous": period_previous,
+            "delta_total": round(total_cnt, 2),
+            "delta_total_pct": round(change_percent or 0.0, 1),
+            "breakdown": breakdown,
+            "residual_pct": residual_pct,
+        }
+
+    # C. Alertes Stock Bas
+    if kpi_id == "stock_alerts":
+        stock_prods = odoo.search_read(
+            "product.product",
+            [
+                ["type", "=", "product"],
+                ["qty_available", "<", 5],
+            ],
+            ["name", "categ_id", "qty_available"],
+        ) or []
+
+        if not stock_prods:
+            return None
+
+        total_cnt = float(len(stock_prods))
+        cat_map = {}
+        for p in stock_prods:
+            cat = p["categ_id"][1] if p.get("categ_id") else "Sans catégorie"
+            cat_map[cat] = cat_map.get(cat, 0.0) + 1.0
+
+        all_segments = []
+        for cat, cnt in cat_map.items():
+            all_segments.append({"dimension": "product", "segment": f"Catégorie : {cat}", "delta": cnt})
+
+        all_segments.sort(key=lambda x: abs(x["delta"]), reverse=True)
+        top3 = all_segments[:3]
+
+        breakdown = []
+        sum_pct = 0.0
+        for s in top3:
+            contrib = round((s["delta"] / total_cnt) * 100.0, 1) if total_cnt > 0 else 0.0
+            sum_pct += contrib
+            breakdown.append({
+                "dimension": s["dimension"],
+                "segment": s["segment"],
+                "delta": round(s["delta"], 2),
+                "contribution_pct": contrib,
+            })
+
+        residual_pct = round(max(0.0, 100.0 - sum_pct), 1)
+        return {
+            "kpi_name": kpi_name,
+            "period_current": period_current,
+            "period_previous": period_previous,
+            "delta_total": round(total_cnt, 2),
+            "delta_total_pct": round(change_percent or 0.0, 1),
+            "breakdown": breakdown,
+            "residual_pct": residual_pct,
+        }
+
+    # D. Pipeline CRM Ouvert
+    if kpi_id == "pipeline_value":
+        opps = odoo.search_read(
+            "crm.lead",
+            [
+                ["type", "=", "opportunity"],
+                ["active", "=", True],
+                ["stage_id.is_won", "=", False],
+                ["company_id", "in", [False, comp_id]],
+            ],
+            ["name", "expected_revenue", "stage_id", "user_id"],
+        ) or []
+
+        if not opps:
+            return None
+
+        tot_rev = sum(o.get("expected_revenue", 0.0) for o in opps)
+        stage_map = {}
+        user_map = {}
+        for o in opps:
+            st = o["stage_id"][1] if o.get("stage_id") else "Sans étape"
+            usr = o["user_id"][1] if o.get("user_id") else "Non assigné"
+            v = o.get("expected_revenue", 0.0)
+            stage_map[st] = stage_map.get(st, 0.0) + v
+            user_map[usr] = user_map.get(usr, 0.0) + v
+
+        all_segments = []
+        for st, v in stage_map.items():
+            all_segments.append({"dimension": "customer_category", "segment": f"Étape : {st}", "delta": v})
+        for usr, v in user_map.items():
+            all_segments.append({"dimension": "sales_rep", "segment": f"Commercial : {usr}", "delta": v})
+
+        all_segments.sort(key=lambda x: abs(x["delta"]), reverse=True)
+        top3 = all_segments[:3]
+
+        breakdown = []
+        sum_pct = 0.0
+        for s in top3:
+            contrib = round((s["delta"] / tot_rev) * 100.0, 1) if tot_rev > 0 else 0.0
+            sum_pct += contrib
+            breakdown.append({
+                "dimension": s["dimension"],
+                "segment": s["segment"],
+                "delta": round(s["delta"], 2),
+                "contribution_pct": contrib,
+            })
+
+        residual_pct = round(max(0.0, 100.0 - sum_pct), 1)
+        return {
+            "kpi_name": kpi_name,
+            "period_current": period_current,
+            "period_previous": period_previous,
+            "delta_total": round(tot_rev, 2),
+            "delta_total_pct": round(change_percent or 0.0, 1),
+            "breakdown": breakdown,
+            "residual_pct": residual_pct,
+        }
+
+    # E. Valorisation du Stock
+    if kpi_id == "stock_value":
+        prods = odoo.search_read(
+            "product.product",
+            [["type", "=", "product"]],
+            ["name", "qty_available", "standard_price", "categ_id"],
+        ) or []
+
+        if not prods:
+            return None
+
+        cat_map = {}
+        tot_val = 0.0
+        for p in prods:
+            v = p.get("qty_available", 0.0) * p.get("standard_price", 0.0)
+            tot_val += v
+            cat = p["categ_id"][1] if p.get("categ_id") else "Sans catégorie"
+            cat_map[cat] = cat_map.get(cat, 0.0) + v
+
+        all_segments = []
+        for cat, v in cat_map.items():
+            all_segments.append({"dimension": "product", "segment": f"Catégorie : {cat}", "delta": v})
+
+        all_segments.sort(key=lambda x: abs(x["delta"]), reverse=True)
+        top3 = all_segments[:3]
+
+        breakdown = []
+        sum_pct = 0.0
+        for s in top3:
+            contrib = round((s["delta"] / tot_val) * 100.0, 1) if tot_val > 0 else 0.0
+            sum_pct += contrib
+            breakdown.append({
+                "dimension": s["dimension"],
+                "segment": s["segment"],
+                "delta": round(s["delta"], 2),
+                "contribution_pct": contrib,
+            })
+
+        residual_pct = round(max(0.0, 100.0 - sum_pct), 1)
+        return {
+            "kpi_name": kpi_name,
+            "period_current": period_current,
+            "period_previous": period_previous,
+            "delta_total": round(tot_val, 2),
+            "delta_total_pct": round(change_percent or 0.0, 1),
+            "breakdown": breakdown,
+            "residual_pct": residual_pct,
+        }
+
+    # F. CA, Nouvelles Commandes, Clients Actifs (sale.order)
     cur_start, prev_start, prev_end = _get_month_date_ranges()
 
     orders_cur = odoo.search_read(
         "sale.order",
-        [["state", "in", ["sale", "done"]], ["date_order", ">=", cur_start]],
+        [
+            ["state", "in", ["sale", "done"]],
+            ["date_order", ">=", cur_start],
+            ["company_id", "=", comp_id],
+        ],
         ["id", "amount_total", "partner_id", "user_id"]
     ) or []
 
     orders_prev = odoo.search_read(
         "sale.order",
-        [["state", "in", ["sale", "done"]], ["date_order", ">=", prev_start], ["date_order", "<", prev_end]],
+        [
+            ["state", "in", ["sale", "done"]],
+            ["date_order", ">=", prev_start],
+            ["date_order", "<", prev_end],
+            ["company_id", "=", comp_id],
+        ],
         ["id", "amount_total", "partner_id", "user_id"]
     ) or []
 
@@ -112,8 +398,6 @@ def _run_real_rca_decomposition(
         comm_prev[name] = comm_prev.get(name, 0.0) + val
 
     all_segments = []
-
-    # FULL OUTER JOIN pour commercial
     for comm in set(comm_cur.keys()) | set(comm_prev.keys()):
         c_val = comm_cur.get(comm, 0.0)
         p_val = comm_prev.get(comm, 0.0)
@@ -142,7 +426,6 @@ def _run_real_rca_decomposition(
         val = o["amount_total"] if kpi_id == "revenue" else 1.0
         reg_prev[st_name] = reg_prev.get(st_name, 0.0) + val
 
-    # FULL OUTER JOIN pour région
     for reg in set(reg_cur.keys()) | set(reg_prev.keys()):
         c_val = reg_cur.get(reg, 0.0)
         p_val = reg_prev.get(reg, 0.0)
@@ -169,7 +452,6 @@ def _run_real_rca_decomposition(
             val = l["price_subtotal"] if kpi_id == "revenue" else 1.0
             prod_prev[p_name] = prod_prev.get(p_name, 0.0) + val
 
-    # FULL OUTER JOIN pour produit
     for prod in set(prod_cur.keys()) | set(prod_prev.keys()):
         c_val = prod_cur.get(prod, 0.0)
         p_val = prod_prev.get(prod, 0.0)
@@ -180,7 +462,6 @@ def _run_real_rca_decomposition(
     if not all_segments:
         return None
 
-    # Trier par |delta| décroissant et garder le top 3
     all_segments.sort(key=lambda x: abs(x["delta"]), reverse=True)
     top3 = all_segments[:3]
 
@@ -209,6 +490,7 @@ def _run_real_rca_decomposition(
         "breakdown": breakdown,
         "residual_pct": residual_pct
     }
+
 
 
 def _generate_rigorous_simulated_rca(

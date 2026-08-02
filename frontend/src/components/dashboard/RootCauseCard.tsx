@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { ChevronDown, ChevronUp, Layers, HelpCircle, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Layers, HelpCircle, Sparkles, TrendingDown, TrendingUp, Info } from "lucide-react";
 import { useRootCause, RootCauseData } from "@/hooks/useRootCause";
 import { cn } from "@/lib/utils";
 
@@ -23,15 +23,27 @@ export function RootCauseCard({ anomalyId, defaultExpanded = true }: RootCauseCa
 
   if (isLoading) {
     return (
-      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl animate-pulse text-xs text-slate-500">
-        Chargement de l'analyse des causes racines (RCA)...
+      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl animate-pulse flex items-center gap-2 text-xs text-slate-500 font-medium">
+        <div className="h-4 w-4 rounded-full border-2 border-slate-300 border-t-indigo-600 animate-spin" />
+        <span>Chargement de l'analyse des causes racines (RCA)...</span>
       </div>
     );
   }
 
   if (isError || !rca) {
-    return null;
+    return (
+      <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl flex items-start gap-2.5 text-xs text-slate-600">
+        <Info className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+        <div>
+          <p className="font-semibold text-slate-700">Aucune anomalie statistique majeure détectée sur ce KPI</p>
+          <p className="mt-0.5 text-[11px] text-slate-500 leading-relaxed">
+            Cette alerte est déclenchée par une règle d'évaluation de seuil fixe (ex: stock disponible inférieur au seuil d'alerte ou retard de livraison) et ne nécessite pas de décomposition par segment.
+          </p>
+        </div>
+      </div>
+    );
   }
+
 
   const isDrop = rca.deltaTotalPct < 0;
 

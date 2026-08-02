@@ -6,6 +6,8 @@ import { translateOdooModel, translateOdooDomain } from "@/lib/utils";
 import { RootCauseCard } from "./RootCauseCard";
 
 interface SourceData {
+  kpiId?: string;
+  anomalyId?: string;
   kpiLabel: string;
   kpiValue: number;
   kpiUnit?: string;
@@ -25,6 +27,7 @@ interface SourceDataModalProps {
   title: string;
   data: SourceData | null;
 }
+
 
 
 export function SourceDataModal({ isOpen, onClose, title, data }: SourceDataModalProps) {
@@ -171,7 +174,8 @@ export function SourceDataModal({ isOpen, onClose, title, data }: SourceDataModa
               <Activity className="h-4 w-4 text-rose-500" />
               Décomposition des causes racine (RCA)
             </h4>
-            <RootCauseCard anomalyId="revenue" defaultExpanded={true} />
+            <RootCauseCard anomalyId={data.kpiId || data.anomalyId || ""} defaultExpanded={true} />
+
           </div>
 
           {/* History Details if Anomaly */}

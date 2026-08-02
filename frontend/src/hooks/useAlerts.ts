@@ -2,6 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
 export interface AlertSourceData {
+  kpiId: string;
+  anomalyId?: string;
   kpiLabel: string;
   kpiValue: number;
   kpiUnit?: string;
@@ -54,6 +56,8 @@ async function fetchAlerts(): Promise<Alert[]> {
     message: a.message,
     isAnomaly: a.is_anomaly || false,
     sourceData: a.source_data ? {
+      kpiId: a.kpi_id,
+      anomalyId: a.id,
       kpiLabel: a.source_data.kpi_label,
       kpiValue: a.source_data.kpi_value,
       kpiUnit: a.source_data.kpi_unit,
@@ -68,6 +72,7 @@ async function fetchAlerts(): Promise<Alert[]> {
     } : undefined,
   }));
 }
+
 
 export function useAlerts() {
   return useQuery({

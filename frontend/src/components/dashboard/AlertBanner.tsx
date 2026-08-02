@@ -60,7 +60,10 @@ export function AlertBanner() {
               {alert.sourceData && (
                 <button
                   onClick={() => {
-                    setSelectedData(alert.sourceData || null);
+                    const srcData = alert.sourceData
+                      ? { ...alert.sourceData, kpiId: alert.kpiId, anomalyId: alert.id }
+                      : null;
+                    setSelectedData(srcData);
                     setModalTitle(isAnomaly ? "Données Source de l'Anomalie IA" : "Données Source de l'Alerte");
                     setIsModalOpen(true);
                   }}
@@ -73,6 +76,7 @@ export function AlertBanner() {
                   Voir les données source
                 </button>
               )}
+
 
               <button
                 onClick={() => {
