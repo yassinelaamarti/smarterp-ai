@@ -125,22 +125,50 @@ def post_process_and_validate_summary(summary_text: str) -> str:
     return result
 
 
+def generate_chat_fallback(message: str) -> str:
+    """Génère une réponse déterministe structurée en cas de rate limit (HTTP 429) sur l'Agent Chat."""
+    context = _build_context()
+    return f"""Le service d'analyse IA est momentanément indisponible (limite de requêtes atteinte).
+
+Voici les données d'entreprise en temps réel validées en cache Odoo 17 :
+
+{context}
+
+💡 *Conseil : Vous pouvez ré-essayer votre question dans quelques minutes lorsque le quota journalier LLM sera réinitialisé.*"""
+
+
 def ask(message: str, history: list[dict] | None = None) -> str:
-    system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(context=_build_context())
+    context = _build_context()
+    system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(context=context)
 
     messages = [{"role": "system", "content": system_prompt}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": message})
 
-    completion = _client.chat.completions.create(
-        model=settings.groq_model,
-        messages=messages,
-        temperature=0.2,
-        max_tokens=700,
-    )
-    raw_response = completion.choices[0].message.content
-    return post_process_and_validate_summary(raw_response)
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            completion = _client.chat.completions.create(
+                model=settings.groq_model,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=700,
+            )
+            raw_response = completion.choices[0].message.content
+            return post_process_and_validate_summary(raw_response)
+        except Exception as e:
+            err_msg = str(e)
+            logger.warning(f"Erreur lors de l'appel Agent Chat (Tentative {attempt + 1}/{max_retries + 1}): {err_msg}")
+
+            if "Limit 100000" in err_msg or "tokens per day" in err_msg or "429" in err_msg or "TPD" in err_msg or "rate_limit" in err_msg.lower():
+                logger.error("Quota journalier Groq atteint (429/TPD) sur le Chat. Basculement sur le fallback déterministe.")
+                return generate_chat_fallback(message)
+
+            if attempt < max_retries:
+                time.sleep((attempt + 1) * 1.5)
+
+    return generate_chat_fallback(message)
 
 
 def generate_fallback_summary() -> str:
