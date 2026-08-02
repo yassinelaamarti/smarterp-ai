@@ -148,8 +148,12 @@ def _compute_priority_score(entity_item: dict) -> float:
                 score += 40.0
             elif alert.severity == "warning":
                 score += 20.0
-            if alert.is_anomaly:
+            elif alert.severity == "info":
+                score += 5.0
+
+            if alert.is_anomaly and not getattr(alert, "is_positive_trend", False):
                 score += 10.0
+
 
     domain = entity_item.get("domain") or _resolve_domain_from_entity_key(entity_item.get("entity_key", ""))
     if domain == "stock":
