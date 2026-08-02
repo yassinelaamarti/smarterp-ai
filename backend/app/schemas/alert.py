@@ -23,9 +23,11 @@ class AlertSourceData(BaseModel):
 class Alert(BaseModel):
     id: str
     kpi_id: str
-    severity: Literal["warning", "critical"]
+    severity: Literal["warning", "critical", "info"]
     message: str
     is_anomaly: bool = False
+    is_positive_trend: Optional[bool] = False
     source_data: Optional[AlertSourceData] = None
+
 
 

@@ -56,18 +56,22 @@ def compute_health_score() -> HealthScore:
     finally:
         db.close()
 
-    # ÉTAPE 1 : Déduplication par KPI (Conserver uniquement le signal le plus sévère pour chaque KPI)
+    # ÉTAPE 1 : Déduplication par KPI (Conserver le signal de risque principal pour chaque KPI)
     dedup_map = {}
+    severity_rank = {"critical": 3, "warning": 2, "info": 1}
+
     for alert in raw_alerts:
         kpi_id = alert.kpi_id
         if kpi_id not in dedup_map:
             dedup_map[kpi_id] = alert
         else:
             existing = dedup_map[kpi_id]
-            # Priorité à critical sur warning, puis aux anomalies IA
-            if alert.severity == "critical" and existing.severity != "critical":
+            rank_new = severity_rank.get(alert.severity, 1)
+            rank_old = severity_rank.get(existing.severity, 1)
+
+            if rank_new > rank_old:
                 dedup_map[kpi_id] = alert
-            elif alert.severity == existing.severity and alert.is_anomaly:
+            elif rank_new == rank_old and alert.is_anomaly:
                 dedup_map[kpi_id] = alert
 
     dedup_alerts = list(dedup_map.values())
@@ -77,13 +81,19 @@ def compute_health_score() -> HealthScore:
     for alert in dedup_alerts:
         category = KPI_CATEGORIES.get(alert.kpi_id)
         penalties = CATEGORY_PENALTIES.get(category, DEFAULT_PENALTIES) if category else DEFAULT_PENALTIES
-        base_val = penalties.get(alert.severity, 5)
+
+        if getattr(alert, "is_positive_trend", False) or alert.severity == "info":
+            # Tendance positive (ex: hausse atypique du CA ou des commandes) : simple contrôle d'audit (3 pts max)
+            base_val = 3.0
+        else:
+            base_val = float(penalties.get(alert.severity, 5))
 
         penalty_items.append({
             "alert": alert,
             "base_penalty": base_val,
             "cat_label": penalties["label"],
         })
+
 
     # Trier par pénalité de base décroissante (les alertes les plus lourdes en premier)
     penalty_items.sort(key=lambda x: x["base_penalty"], reverse=True)

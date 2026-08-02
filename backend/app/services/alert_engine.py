@@ -201,14 +201,24 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
                 if std_dev > 0:
                     z_score = (kpi.value - mean) / std_dev
                     # Seuil d'anomalie à 1.8 pour les petits échantillons de démo
+                    HIGHER_IS_GOOD = {"revenue", "new_orders", "conversion_rate", "active_customers", "new_leads", "pipeline_value", "stock_value"}
+                    LOWER_IS_GOOD = {"stock_alerts", "late_orders", "unpaid_invoices"}
+
                     if abs(z_score) >= 1.8:
-                        severity = "critical" if abs(z_score) >= 2.2 else "warning"
                         direction = "Hausse" if z_score > 0 else "Baisse"
-                        message = f"[Anomalie IA] {direction} anormale détectée pour {kpi.label.lower()} : la valeur actuelle ({kpi.value} {kpi.unit or ''}) s'écarte significativement de l'historique (Z-score: {z_score:+.2f}, moyenne: {mean:.1f})."
-                        
+                        is_positive_trend = False
+                        if (z_score > 0 and kpi.id in HIGHER_IS_GOOD) or (z_score < 0 and kpi.id in LOWER_IS_GOOD):
+                            is_positive_trend = True
+
+                        if is_positive_trend:
+                            severity = "info"
+                            message = f"[Audit/Info] {direction} forte à auditor pour {kpi.label.lower()} : la valeur actuelle ({kpi.value} {kpi.unit or ''}) dépasse l'historique (Z-score: {z_score:+.2f}, moyenne: {mean:.1f})."
+                        else:
+                            severity = "critical" if abs(z_score) >= 2.2 else "warning"
+                            message = f"[Anomalie IA] {direction} anormale détectée pour {kpi.label.lower()} : la valeur actuelle ({kpi.value} {kpi.unit or ''}) s'écarte significativement de l'historique (Z-score: {z_score:+.2f}, moyenne: {mean:.1f})."
+
                         # Calculer RCA
                         from app.services.root_cause_analysis import get_root_cause_analysis, format_root_causes_text
-                        # Pour les anomalies, on peut estimer un pseudo change_percent basé sur l'écart à la moyenne
                         pseudo_change = ((kpi.value - mean) / abs(mean) * 100) if mean != 0 else None
                         rca_list = get_root_cause_analysis(kpi.id, kpi.value, pseudo_change)
                         rca_text = format_root_causes_text(rca_list)
@@ -228,21 +238,23 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
                                 model=kpi.source_data.model,
                                 domain=kpi.source_data.domain,
                                 formula=kpi.source_data.formula,
-                                threshold_info=f"Anomalie statistique détectée : Z-score absolu |{z_score:.2f}| >= 1.8. Écart significatif par rapport à la moyenne historique ({mean:.1f}).",
+                                threshold_info=f"Anomalie statistique détectée : Z-score absolu |{z_score:.2f}| >= 1.8. Écart par rapport à la moyenne historique ({mean:.1f}).",
                                 history_values=history_values,
                                 z_score=z_score,
                                 mean=mean,
                                 root_causes=root_causes_formatted if root_causes_formatted else None
                             )
-                        
+
                         alerts.append(Alert(
                             id=f"anomaly_{kpi.id}",
                             kpi_id=kpi.id,
                             severity=severity,
                             message=message,
                             is_anomaly=True,
+                            is_positive_trend=is_positive_trend,
                             source_data=source_data
                         ))
+
 
     return alerts
 
