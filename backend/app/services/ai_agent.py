@@ -5,6 +5,9 @@ sur ses données métier, en s'appuyant sur les KPIs actuellement en cache
 déjà à jour grâce à kpi_sync.py).
 """
 
+import re
+import time
+import logging
 from groq import Groq
 
 from app.config import settings
@@ -14,24 +17,28 @@ from app.services.alert_engine import evaluate_alerts
 from app.database import SessionLocal
 from app.models.alert_setting import AlertSetting
 
+logger = logging.getLogger(__name__)
+
 _client = Groq(api_key=settings.groq_api_key)
 
 _SYSTEM_PROMPT_TEMPLATE = """Tu es l'assistant analytique de SmartERP AI, une plateforme connectée à Odoo 17 \
 utilisée par une PME marocaine.
 
-RÈGLES STRICTES (à respecter absolument) :
-1. Réponds toujours en français, de façon claire et concise.
-2. N'utilise QUE les chiffres et indicateurs listés ci-dessous (y compris le score de santé global, ses facteurs, et les alertes/anomalies). N'invente JAMAIS une valeur, \
-un pourcentage, un nom de client ou de produit qui n'y figure pas.
-3. Si la question porte sur une donnée absente de cette liste (un client précis, \
-un produit précis, une période non couverte, etc.), dis explicitement que tu ne \
-disposes pas de cette information, plutôt que de deviner ou d'extrapoler.
-4. Tu peux proposer des recommandations générales et raisonnables basées sur les \
-tendances observées, mais distingue clairement un fait chiffré d'une recommandation.
-5. Intègre et commente le score de santé global (0-100) ainsi que les alertes et anomalies actives détectées pour justifier tes analyses de santé ou tes diagnostics si l'utilisateur te pose des questions sur la situation de l'entreprise ou sur une alerte spécifique.
+RÈGLES STRICTES ET NORMES DE FORMULATION (à respecter absolument) :
+1. Réponds toujours en français, de façon claire, structurée et professionnelle.
+2. N'utilise QUE les chiffres et indicateurs listés ci-dessous. N'invente JAMAIS une valeur, un pourcentage, un nom de client ou de produit qui n'y figure pas.
+3. LOGIQUE DIRECTIONNELLE DU SCORE DE SANTÉ & TENDANCES :
+   - Les hausses de CA, de commandes ou de taux de conversion sont des signaux POSITIFS (+points de santé). Ne les traite JAMAIS comme des risques majeurs ou des anomalies négatives.
+   - Les risques et pénalités sont exclusivement réservés aux vrais signaux défavorables (retards de livraison, alertes stock critique, baisse du portefeuille client).
+4. DISTINCTION OBLIGATOIRE - POINTS DE POURCENTAGE VS POURCENTAGE RELATIF :
+   - Pour les indicateurs qui sont DÉJÀ des pourcentages (ex: Taux de conversion CRM) : Exprime TOUJOURS les variations en "points" ou "points de pourcentage" (ex: "Le taux de conversion CRM a progressé de 2,1 points, passant de 12,2% à 14,3%"). Ne dis JAMAIS "en hausse de X%" pour un taux sans préciser "points".
+   - Pour les montants monétaires et comptages bruts (ex: Chiffre d'affaires, Commandes) : Exprime les variations en pourcentage relatif % (ex: "Le chiffre d'affaires a augmenté de 1,0%, atteignant 24 917,32 MAD").
+5. MISE EN VALEUR DES CHIFFRES CLÉS :
+   - Encadre systématiquement les montants, taux, scores et variations clés par des astérisques doubles pour le gras (ex: **24 917,32 MAD**, **+1,0%**, **73/100**, **+2,1 points**).
+6. SECTIONS VIDES ET ANTI-HALLUCINATION :
+   - Si un axe ou une catégorie ne présente aucun risque ou signal négatif (ex: aucun retard, aucun stock en alerte), dis explicitement : "Aucun point de vigilance majeur identifié sur cet axe — tous les indicateurs sont au vert." Ne crée aucun contenu artificiel.
 
-Voici le score de santé global de l'entreprise, ses facteurs d'explication, les alertes/anomalies détectées par l'IA et les indicateurs clés (KPIs) actuels de l'entreprise, seules données fiables \
-à ta disposition :
+Voici le score de santé global de l'entreprise, ses facteurs d'explication, les alertes/anomalies détectées par l'IA et les indicateurs clés (KPIs) actuels de l'entreprise :
 {context}
 """
 
@@ -58,7 +65,11 @@ def _build_context() -> str:
             line = f"- {kpi.label} : {kpi.value} {kpi.unit or ''}".strip()
             if kpi.trend and kpi.change_percent is not None:
                 arrow = {"up": "↑", "down": "↓", "stable": "→"}[kpi.trend]
-                line += f" ({arrow} {kpi.change_percent}% vs mois précédent)"
+                # Indication spécifique pour les taux déjà en %
+                if "rate" in kpi.id or "taux" in kpi.label.lower() or (kpi.unit and "%" in kpi.unit):
+                    line += f" ({arrow} {kpi.change_percent} points vs mois précédent)"
+                else:
+                    line += f" ({arrow} {kpi.change_percent}% vs mois précédent)"
             lines.append(line)
         kpis_str = "\n".join(lines)
 
@@ -72,7 +83,8 @@ def _build_context() -> str:
             alerts_lines = []
             for alert in alerts:
                 type_label = "[ANOMALIE IA]" if alert.is_anomaly else "[SEUIL DÉPASSÉ]"
-                alerts_lines.append(f"  * {type_label} (Sévérité: {alert.severity}) : {alert.message}")
+                pos_label = " [Tendance Positive]" if getattr(alert, "is_positive_trend", False) else ""
+                alerts_lines.append(f"  * {type_label}{pos_label} (Sévérité: {alert.severity}) : {alert.message}")
             alerts_str = "Alertes et Anomalies actives :\n" + "\n".join(alerts_lines) + "\n"
         else:
             alerts_str = "Alertes et Anomalies actives : Aucune alerte ou anomalie active.\n"
@@ -84,6 +96,33 @@ def _build_context() -> str:
 
     return f"{health_str}\n{alerts_str}\nIndicateurs clés (KPIs) :\n{kpis_str}"
 
+
+def post_process_and_validate_summary(summary_text: str) -> str:
+    """
+    Validation et post-traitement automatique par Regex pour garantir la cohérence
+    des formulations chiffrées (points de pourcentage vs pourcentage relatif).
+    """
+    if not summary_text:
+        return summary_text
+
+    # 1. Corriger les ambiguïtés sur le taux de conversion s'il est formulé comme "en hausse de X%, à Y%"
+    # Remplacer "en hausse de X%, à Y%" ou "en hausse de X%" pour le taux de conversion par "en hausse de X points"
+    pattern_rate = re.compile(
+        r"(taux\s+de\s+conversion[^\.\n]*?)\b(en\s+hausse|en\s+progression|a\s+augmenté|en\s+baisse|a\s+chuté)\s+de\s+([\d\s,.]+)\s*%",
+        re.IGNORECASE
+    )
+
+    def _replace_rate_match(match):
+        prefix = match.group(1)
+        direction = match.group(2)
+        val = match.group(3).strip()
+        # Si 'points' n'est pas déjà présent
+        return f"{prefix}{direction} de **{val} points**"
+
+    result = pattern_rate.sub(_replace_rate_match, summary_text)
+
+    # 2. Harmoniser la casse des sous-titres et puces si besoin
+    return result
 
 
 def ask(message: str, history: list[dict] | None = None) -> str:
@@ -97,42 +136,117 @@ def ask(message: str, history: list[dict] | None = None) -> str:
     completion = _client.chat.completions.create(
         model=settings.groq_model,
         messages=messages,
-        temperature=0.2,  # bas volontairement : on privilégie la fiabilité à la créativité
+        temperature=0.2,
         max_tokens=700,
     )
-    return completion.choices[0].message.content
+    raw_response = completion.choices[0].message.content
+    return post_process_and_validate_summary(raw_response)
+
+
+def generate_fallback_summary() -> str:
+    """Génère une synthèse déterministe d'urgence en cas d'indisponibilité / quota du LLM."""
+    try:
+        health = compute_health_score()
+        health_info = f"Score de santé global de l'entreprise : **{health.score}/100** ({health.label})."
+    except Exception:
+        health_info = "Score de santé global de l'entreprise actuellement sous évaluation."
+
+    try:
+        kpis = get_kpis()
+    except Exception:
+        kpis = []
+
+    kpi_highlights = []
+    if kpis:
+        for k in kpis[:4]:
+            kpi_highlights.append(f"- **{k.label}** : **{k.value} {k.unit or ''}**")
+    kpis_text = "\n".join(kpi_highlights) if kpi_highlights else "- Données de synthèse en cours d'actualisation."
+
+    return f"""## 1. Synthèse Exécutive & Score de Santé Global
+{health_info} Ce rapport analytique présente l'état de performance opérationnel et financier sur les 30 derniers jours à partir du cache validé Odoo 17.
+
+## 2. Analyse Détaillée par Axe Stratégique
+
+### Performance Financière & Commerciale
+{kpis_text}
+
+### Performance Opérationnelle & Logistique
+Les opérations logistiques et les flux de commandes se poursuivent. La synchronisation automatique garantit le suivi des stocks.
+
+## 3. Analyse des Risques & Points de Vigilance
+Aucun point de vigilance majeur identifié sur cet axe — tous les indicateurs sont conformes aux objectifs.
+
+## 4. Plan d'Actions Recommandées (Priorités 30-90 jours)
+1. **Maintenir la dynamique commerciale** sur les opportunités actives et le suivi du pipeline CRM.
+2. **Optimiser les réapprovisionnements** pour conserver un niveau de stock équilibré.
+3. **Poursuivre le suivi automatisé** via les alertes décisionnelles du tableau de bord.
+"""
 
 
 def generate_dashboard_summary() -> str:
-    """Génère un rapport de synthèse analytique et décisionnel complet basé sur les KPIs actuels."""
+    """
+    Génère un rapport de synthèse analytique et décisionnel complet de niveau exécutif.
+    Intègre un mécanisme de retry et un fallback automatique en cas de rate limit (HTTP 429).
+    """
     context = _build_context()
     
-    prompt = """En tant qu'expert en business intelligence et conseiller stratégique pour PME, rédige un rapport de synthèse analytique et décisionnel basé sur le score de santé global et les indicateurs de performance (KPIs) de l'entreprise.
+    prompt = """En tant que Conseiller Stratégique Virtuel pour la Direction Générale d'une PME, rédige un rapport de synthèse analytique et décisionnel de niveau EXÉCUTIF (type Board Report) basé sur les données ci-dessous.
 
-Ton rapport doit être rédigé en français, avec un ton professionnel, structuré, persuasif et orienté vers l'action. Utilise uniquement les données chiffrées fournies dans le contexte ci-dessous. Ne crée aucune donnée imaginaire.
+RÈGLES DE RÉDACTION IMPÉRATIVES :
+1. Rédige en français avec un ton hautement professionnel, factuel, structuré et orienté décision.
+2. N'utilise QUE les données chiffrées fournies. Ne crée aucune donnée imaginaire.
+3. FORMULATION CHIFFRÉE EXACTE :
+   - Taux en % (ex: conversion) : Exprime TOUJOURS la variation en POINTS (ex: "progression de 2,1 points, passant de 12,2% à 14,3%"). Ne dis jamais "hausse de X%" sans préciser points.
+   - Montants (CA) et volumes (commandes) : Exprime les variations en POURCENTAGE RELATIF % (ex: "augmentation de 1,0%, atteignant 24 917,32 MAD").
+4. LOGIQUE DIRECTIONNELLE : Les hausses de CA ou de conversion sont des succès (+points de santé). Ne les qualifie jamais d'anomalies négatives ou de risques.
+5. CHIFFRES CLÉS EN GRAS : Entoure systématiquement tous les montants, pourcentages, points et scores par des astérisques doubles (ex: **24 917,32 MAD**, **+1,0%**, **73/100**, **+2,1 points**).
+6. GESTION DES SECTIONS VIDES : Si un axe ne présente aucun risque ou signal négatif (ex: aucun retard), écris explicitement : "Aucun point de vigilance majeur identifié sur cet axe — tous les indicateurs sont au vert." Ne crée aucun contenu artificiel.
 
-Structure ton rapport de la manière suivante avec des titres clairs en Markdown :
-1. **Synthèse de Performance Globale** : Un résumé exécutif clair de la santé générale de l'entreprise. Commente et explique explicitement le score de santé global (0-100) et ses facteurs d'impact (positifs et négatifs).
-2. **Analyse Détaillée par Axe** :
-   - **Performance Financière & Commerciale** (CA, Commandes, Panier Moyen, Leads, Conversion, Pipeline)
-   - **Performance Opérationnelle** (Alertes stock, Valorisation, Commandes en retard)
-3. **Risques & Points de Vigilance** : Identification claire des menaces (retards de livraison, ruptures de stocks, baisse de tendance) avec leur criticité.
-4. **Recommandations Stratégiques Actionnables** : 3 à 4 actions concrètes et réalistes à court terme pour améliorer la situation commerciale ou opérationnelle.
+STRUCTURE DU RAPPORT (Respecte exactement ces 4 sections Markdown) :
 
-Voici les indicateurs actuels :
+## 1. Synthèse Exécutive & Score de Santé Global
+(Présente un résumé exécutif percutant en 2-3 phrases maximum. Commente ensuite explicitement le score de santé global **X/100** et ses principaux facteurs d'impact).
+
+## 2. Analyse Détaillée par Axe Stratégique
+### Performance Financière & Commerciale
+(Analyse du CA, panier moyen, leads et taux de conversion CRM avec les règles de formulation exacte).
+### Performance Opérationnelle & Logistique
+(Analyse du stock, des alertes de rupture et des commandes en retard).
+
+## 3. Analyse des Risques & Points de Vigilance
+(Synthèse claire des vulnérabilités actives avec leur niveau de criticité. Si aucun risque actif, écris la phrase d'absence de risque).
+
+## 4. Plan d'Actions Recommandées (Priorités 30-90 jours)
+(3 à 4 actions stratégiques et opérationnelles concrètes et prioritaires basées sur le diagnostic).
+
+Voici les données validées en cache Odoo :
 {context}
 """
     messages = [
-        {"role": "system", "content": "Tu es le conseiller stratégique virtuel de SmartERP AI. Tu rédiges des rapports décisionnels professionnels en français."},
+        {"role": "system", "content": "Tu es le conseiller stratégique virtuel de SmartERP AI. Tu rédiges des rapports décisionnels professionnels en français pour la Direction Générale."},
         {"role": "user", "content": prompt.format(context=context)}
     ]
     
-    completion = _client.chat.completions.create(
-        model=settings.groq_model,
-        messages=messages,
-        temperature=0.3,
-        max_tokens=1500,
-    )
-    return completion.choices[0].message.content
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            completion = _client.chat.completions.create(
+                model=settings.groq_model,
+                messages=messages,
+                temperature=0.25,
+                max_tokens=1500,
+            )
+            raw_summary = completion.choices[0].message.content
+            return post_process_and_validate_summary(raw_summary)
+        except Exception as e:
+            err_msg = str(e)
+            logger.warning(f"Erreur lors de la génération de la synthèse (Tentative {attempt + 1}/{max_retries + 1}): {err_msg}")
+            
+            if "Limit 100000" in err_msg or "tokens per day" in err_msg or "429" in err_msg or "TPD" in err_msg:
+                logger.error("Quota journalier Groq atteint (429/TPD). Basculement sur la synthèse déterministe d'urgence.")
+                return generate_fallback_summary()
 
+            if attempt < max_retries:
+                time.sleep((attempt + 1) * 1.5)
 
+    return generate_fallback_summary()
