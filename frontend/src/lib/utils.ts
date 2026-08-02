@@ -5,6 +5,40 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function formatSegmentLabel(dimension: string, segmentRaw: string): string {
+  if (!segmentRaw) return "";
+  let clean = String(segmentRaw).trim();
+
+  const prefixes = [
+    "Catégorie client : Client : ", "Catégorie client : ", "Client : ",
+    "Catégorie : ", "Région : ", "Commercial : ", "Étape : ", "Produit : "
+  ];
+
+  for (const prefix of prefixes) {
+    if (clean.startsWith(prefix)) {
+      clean = clean.slice(prefix.length).trim();
+    }
+  }
+
+  if (clean.endsWith(" (US)")) {
+    clean = clean.slice(0, -5).trim();
+  }
+
+  const dimClean: { [key: string]: string } = {
+    region: "Région",
+    product: "Produit",
+    sales_rep: "Commercial",
+    customer_category: "Client",
+    customer: "Client",
+  };
+
+  const dimLabel = dimClean[dimension.toLowerCase()] || dimension;
+  if (dimLabel && !clean.startsWith(dimLabel)) {
+    return `${dimLabel} ${clean}`;
+  }
+  return clean;
+}
+
 export function translateOdooModel(model: string): string {
   switch (model) {
     case "sale.order":
@@ -64,4 +98,4 @@ export function translateOdooDomain(domain: string): string[] {
   }
 
   return filters;
-}
+}

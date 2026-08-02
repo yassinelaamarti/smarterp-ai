@@ -1,18 +1,23 @@
 """
 Détection d'alertes à partir des KPIs déjà calculés (cache PostgreSQL).
 
-Aucun appel Odoo ici : on réutilise les valeurs et tendances déjà
+Aucun appel Odoo direct : réutilise les valeurs et tendances déjà
 disponibles via kpi_calculator.get_kpis(), donc cette évaluation
 est quasi instantanée.
-
-Deux types de règles :
-- Seuils absolus (ex: trop de produits en stock bas)
-- Seuils sur tendance (ex: chute du CA par rapport au mois précédent)
 """
 
+import math
+import logging
 from typing import Optional
+from sqlalchemy.orm import Session
+
 from app.schemas.kpi import KPI
 from app.schemas.alert import Alert, AlertSourceData
+from app.models.kpi_cache import KPIHistoryCache
+from app.services.date_utils import current_month_str
+from app.services.root_cause_analysis import get_root_cause_analysis, format_root_causes_text, format_segment_label
+
+logger = logging.getLogger(__name__)
 
 RuleResult = Optional[tuple[str, str]]  # (severity, message)
 
@@ -21,7 +26,7 @@ def _check_stock_alerts(kpi: KPI, settings: dict[str, float]) -> RuleResult:
     critical = settings.get("stock_critical", 10.0)
     warning = settings.get("stock_warning", 0.0)
     if kpi.value > critical:
-        return "critical", f"{int(kpi.value)} produits en stock critique — réapprovisionnement urgent recommandé."
+        return "critical", f"{int(kpi.value)} produits en stock critique — réapprovisionnement recommandé."
     if kpi.value > warning:
         return "warning", f"{int(kpi.value)} produit(s) en stock bas à surveiller."
     return None
@@ -38,19 +43,14 @@ def _check_late_orders(kpi: KPI, settings: dict[str, float]) -> RuleResult:
 
 
 def _check_trend_drop(kpi: KPI, critical_at: float, warning_at: float, label: str) -> RuleResult:
-    """critical_at / warning_at sont des seuils négatifs, ex: -15 pour -15%."""
     if kpi.change_percent is None:
         return None
     if kpi.change_percent <= critical_at:
-        return "critical", f"{label} a chuté de {abs(kpi.change_percent)}% par rapport au mois précédent."
+        return "critical", f"{label} en forte baisse de {abs(kpi.change_percent)}% par rapport au mois précédent."
     if kpi.change_percent <= warning_at:
-        return "warning", f"{label} est en baisse de {abs(kpi.change_percent)}% par rapport au mois précédent."
+        return "warning", f"{label} en baisse de {abs(kpi.change_percent)}% par rapport au mois précédent."
     return None
 
-
-from sqlalchemy.orm import Session
-from app.models.kpi_cache import KPIHistoryCache
-from app.services.date_utils import current_month_str
 
 def _check_unpaid_invoices(kpi: KPI, settings: dict[str, float]) -> RuleResult:
     critical = settings.get("unpaid_invoices_60_plus_critical", 40.0)
@@ -73,7 +73,6 @@ def _check_unpaid_invoices(kpi: KPI, settings: dict[str, float]) -> RuleResult:
     if pct_60 >= warning:
         return "warning", f"Encours ancien à surveiller : {pct_60:.1f}% des factures impayées ont plus de 60 jours de retard."
     return None
-
 
 
 def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, db: Session | None = None) -> list[Alert]:
@@ -118,45 +117,43 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
         elif kpi.id == "revenue":
             critical = settings.get("revenue_critical", -15.0)
             warning = settings.get("revenue_warning", -5.0)
-            result = _check_trend_drop(kpi, critical, warning, "Le chiffre d'affaires")
+            result = _check_trend_drop(kpi, critical, warning, "Chiffre d'affaires")
             threshold_info = f"Seuils de baisse configurés : Critique <= {critical}%, Avertissement <= {warning}%"
         elif kpi.id == "new_orders":
             critical = settings.get("new_orders_critical", -30.0)
             warning = settings.get("new_orders_warning", -20.0)
-            result = _check_trend_drop(kpi, critical, warning, "Le nombre de nouvelles commandes")
+            result = _check_trend_drop(kpi, critical, warning, "Nouvelles commandes")
             threshold_info = f"Seuils de baisse configurés : Critique <= {critical}%, Avertissement <= {warning}%"
         elif kpi.id == "conversion_rate":
             critical = settings.get("conversion_rate_critical", -30.0)
             warning = settings.get("conversion_rate_warning", -20.0)
-            result = _check_trend_drop(kpi, critical, warning, "Le taux de conversion")
+            result = _check_trend_drop(kpi, critical, warning, "Taux de conversion")
             threshold_info = f"Seuils de baisse configurés : Critique <= {critical}%, Avertissement <= {warning}%"
         elif kpi.id == "pipeline_value":
             critical = settings.get("pipeline_value_critical", -40.0)
             warning = settings.get("pipeline_value_warning", -30.0)
-            result = _check_trend_drop(kpi, critical, warning, "La valeur du pipeline CRM")
+            result = _check_trend_drop(kpi, critical, warning, "Pipeline CRM")
             threshold_info = f"Seuils de baisse configurés : Critique <= {critical}%, Avertissement <= {warning}%"
         elif kpi.id == "active_customers":
             critical = settings.get("active_customers_critical", -30.0)
             warning = settings.get("active_customers_warning", -20.0)
-            result = _check_trend_drop(kpi, critical, warning, "Le nombre de clients actifs")
+            result = _check_trend_drop(kpi, critical, warning, "Clients actifs")
             threshold_info = f"Seuils de baisse configurés : Critique <= {critical}%, Avertissement <= {warning}%"
         else:
             continue
 
-
         if result:
-            severity, message = result
-            
-            # Calculer RCA
-            from app.services.root_cause_analysis import get_root_cause_analysis, format_root_causes_text
+            severity, base_msg = result
             rca_list = get_root_cause_analysis(kpi.id, kpi.value, kpi.change_percent)
-            rca_text = format_root_causes_text(rca_list)
-            message = message + rca_text
+            rca_text = format_root_causes_text(rca_list, kpi.unit or "")
+            message = base_msg + rca_text
             
             root_causes_formatted = []
             for rc in rca_list:
                 sign = "+" if rc["delta"] > 0 else ""
-                root_causes_formatted.append(f"{rc['dimension']} '{rc['segment']}' : {sign}{rc['delta']} {rc['unit']}")
+                unit_str = f" {rc['unit']}".rstrip() if rc.get("unit") else ""
+                seg_clean = format_segment_label(rc["dimension"], rc["segment"])
+                root_causes_formatted.append(f"{seg_clean} : {sign}{rc['delta']}{unit_str}")
 
             source_data = None
             if kpi.source_data:
@@ -179,11 +176,10 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
                 source_data=source_data
             ))
 
-    # Détection d'anomalies statistiques par l'IA
+    # Détection d'anomalies statistiques (Langage Business sans Z-Score brut)
     if db is not None:
         cur_month = current_month_str()
         for kpi in kpis:
-            # Récupérer l'historique des mois précédents uniquement (exclure le mois en cours)
             history_records = (
                 db.query(KPIHistoryCache)
                 .filter(KPIHistoryCache.kpi_id == kpi.id, KPIHistoryCache.month != cur_month)
@@ -192,7 +188,6 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
             history_values = [r.value for r in history_records]
 
             if len(history_values) >= 3:
-                import math
                 n = len(history_values)
                 mean = sum(history_values) / n
                 variance = sum((x - mean) ** 2 for x in history_values) / n
@@ -200,34 +195,42 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
 
                 if std_dev > 0:
                     z_score = (kpi.value - mean) / std_dev
-                    # Seuil d'anomalie à 1.8 pour les petits échantillons de démo
                     HIGHER_IS_GOOD = {"revenue", "new_orders", "conversion_rate", "active_customers", "new_leads", "pipeline_value", "stock_value"}
                     LOWER_IS_GOOD = {"stock_alerts", "late_orders", "unpaid_invoices"}
 
                     if abs(z_score) >= 1.8:
-                        direction = "Hausse" if z_score > 0 else "Baisse"
                         is_positive_trend = False
                         if (z_score > 0 and kpi.id in HIGHER_IS_GOOD) or (z_score < 0 and kpi.id in LOWER_IS_GOOD):
                             is_positive_trend = True
 
+                        # Formulation de l'intensité en langage business gradué
+                        abs_z = abs(z_score)
+                        if abs_z >= 3.0:
+                            intensity = "très inhabituel par rapport à l'activité normale"
+                        elif abs_z >= 2.2:
+                            intensity = "nettement " + ("supérieur" if z_score > 0 else "inférieur") + " à la normale"
+                        else:
+                            intensity = "légèrement " + ("supérieur" if z_score > 0 else "inférieur") + " à la normale"
+
                         if is_positive_trend:
                             severity = "info"
-                            message = f"[Audit/Info] {direction} forte à auditor pour {kpi.label.lower()} : la valeur actuelle ({kpi.value} {kpi.unit or ''}) dépasse l'historique (Z-score: {z_score:+.2f}, moyenne: {mean:.1f})."
+                            message_headline = f"{kpi.label} à auditer : {intensity} ({kpi.value} {kpi.unit or ''} vs {mean:.1f} habituellement)"
                         else:
-                            severity = "critical" if abs(z_score) >= 2.2 else "warning"
-                            message = f"[Anomalie IA] {direction} anormale détectée pour {kpi.label.lower()} : la valeur actuelle ({kpi.value} {kpi.unit or ''}) s'écarte significativement de l'historique (Z-score: {z_score:+.2f}, moyenne: {mean:.1f})."
+                            severity = "critical" if abs_z >= 2.2 else "warning"
+                            message_headline = f"{kpi.label} : {intensity} ({kpi.value} {kpi.unit or ''} vs {mean:.1f} habituellement)"
 
-                        # Calculer RCA
-                        from app.services.root_cause_analysis import get_root_cause_analysis, format_root_causes_text
                         pseudo_change = ((kpi.value - mean) / abs(mean) * 100) if mean != 0 else None
                         rca_list = get_root_cause_analysis(kpi.id, kpi.value, pseudo_change)
-                        rca_text = format_root_causes_text(rca_list)
-                        message = message + rca_text
+                        rca_text = format_root_causes_text(rca_list, kpi.unit or "", is_positive_trend=is_positive_trend)
+                        
+                        full_message = message_headline + rca_text
 
                         root_causes_formatted = []
                         for rc in rca_list:
                             sign = "+" if rc["delta"] > 0 else ""
-                            root_causes_formatted.append(f"{rc['dimension']} '{rc['segment']}' : {sign}{rc['delta']} {rc['unit']}")
+                            unit_str = f" {rc['unit']}".rstrip() if rc.get("unit") else ""
+                            seg_clean = format_segment_label(rc["dimension"], rc["segment"])
+                            root_causes_formatted.append(f"{seg_clean} : {sign}{rc['delta']}{unit_str}")
 
                         source_data = None
                         if kpi.source_data:
@@ -249,14 +252,10 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
                             id=f"anomaly_{kpi.id}",
                             kpi_id=kpi.id,
                             severity=severity,
-                            message=message,
+                            message=full_message,
                             is_anomaly=True,
                             is_positive_trend=is_positive_trend,
                             source_data=source_data
                         ))
 
-
     return alerts
-
-
-

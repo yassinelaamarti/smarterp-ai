@@ -61,7 +61,6 @@ class OdooConnector:
             {"context": {"lang": "fr_FR"}},
         )
 
-
     def create(self, model: str, vals: dict) -> int:
         """
         Crée un nouvel enregistrement dans Odoo.
@@ -72,6 +71,18 @@ class OdooConnector:
             self.db, uid, self.password,
             model, "create",
             [vals],
+        )
+
+    def write(self, model: str, ids: list[int], vals: dict) -> bool:
+        """
+        Met à jour un ou plusieurs enregistrements existants dans Odoo via l'ID.
+        Exemple : write("res.partner", [14], {"name": "Atlas Distribution SARL"})
+        """
+        uid = self._get_uid()
+        return self._models().execute_kw(
+            self.db, uid, self.password,
+            model, "write",
+            [ids, vals],
         )
 
 

@@ -54,25 +54,41 @@ export function HealthScoreCard() {
           </p>
           <p className={cn("mt-1 text-lg font-bold", colors.text)}>{data.label}</p>
 
-          <ul className="mt-3 space-y-1">
-            {data.factors.map((f, i) => (
-              <li key={i} className="flex items-center justify-between gap-2 text-xs">
-                <span className="text-slate-500 truncate">{f.label}</span>
-                <span
-                  className={cn(
-                    "flex-shrink-0 font-semibold",
-                    f.impact > 0
-                      ? "text-emerald-600"
-                      : f.impact < 0
-                      ? "text-red-600"
-                      : "text-slate-400"
-                  )}
-                >
-                  {f.impact > 0 ? "+" : ""}
-                  {f.impact}
-                </span>
-              </li>
-            ))}
+          <ul className="mt-3 space-y-1.5">
+            {data.factors.map((f, i) => {
+              // Extraction optionnelle du tag entre crochets (ex: [Finance] ou [Opérations])
+              const match = f.label.match(/^\[(.*?)\]\s*(.*)/);
+              const catTag = match ? match[1] : null;
+              const textContent = match ? match[2] : f.label;
+
+              return (
+                <li key={i} className="flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    {catTag && (
+                      <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                        {catTag}
+                      </span>
+                    )}
+                    <span className="text-slate-600 font-medium truncate" title={textContent}>
+                      {textContent}
+                    </span>
+                  </div>
+                  <span
+                    className={cn(
+                      "flex-shrink-0 font-bold font-mono text-[11px]",
+                      f.impact > 0
+                        ? "text-emerald-600"
+                        : f.impact < 0
+                        ? "text-red-600"
+                        : "text-slate-400"
+                    )}
+                  >
+                    {f.impact > 0 ? "+" : ""}
+                    {f.impact} pts
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </div>
       </div>
