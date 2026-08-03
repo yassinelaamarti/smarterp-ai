@@ -162,10 +162,10 @@ export function RecommendationsList() {
                   {rec.explanation}
                 </p>
 
-                {/* Root Cause Analysis pour les anomalies informatives */}
-                {isInformative && anomalyId && (
+                {/* Root Cause Analysis pour les anomalies informatives de KPIs réelles uniquement */}
+                {isInformative && hasExplainability && correspondingAlert?.sourceData?.rootCauses && (
                   <div className="mt-3">
-                    <RootCauseCard anomalyId={anomalyId} defaultExpanded={false} />
+                    <RootCauseCard anomalyId={correspondingAlert.id} defaultExpanded={false} />
                   </div>
                 )}
               </div>

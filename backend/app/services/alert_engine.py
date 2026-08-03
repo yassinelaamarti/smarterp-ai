@@ -46,7 +46,7 @@ def _check_trend_drop(kpi: KPI, critical_at: float, warning_at: float, label: st
     if kpi.change_percent is None:
         return None
     if kpi.change_percent <= critical_at:
-        return "critical", f"{label} en forte baisse de {abs(kpi.change_percent)}% par rapport au mois précédent."
+        return "critical", f"{label} a chuté de {abs(kpi.change_percent)}% par rapport au mois précédent."
     if kpi.change_percent <= warning_at:
         return "warning", f"{label} en baisse de {abs(kpi.change_percent)}% par rapport au mois précédent."
     return None
@@ -212,12 +212,15 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
                         else:
                             intensity = "légèrement " + ("supérieur" if z_score > 0 else "inférieur") + " à la normale"
 
-                        if is_positive_trend:
+                        if abs_z >= 2.2:
+                            severity = "critical"
+                        elif is_positive_trend:
                             severity = "info"
-                            message_headline = f"{kpi.label} à auditer : {intensity} ({kpi.value} {kpi.unit or ''} vs {mean:.1f} habituellement)"
                         else:
-                            severity = "critical" if abs_z >= 2.2 else "warning"
-                            message_headline = f"{kpi.label} : {intensity} ({kpi.value} {kpi.unit or ''} vs {mean:.1f} habituellement)"
+                            severity = "warning"
+
+                        trend_word = "hausse" if is_positive_trend else "baisse"
+                        message_headline = f"{kpi.label} : {trend_word} anormale détectée ({kpi.value} {kpi.unit or ''} vs {mean:.1f} habituellement)"
 
                         pseudo_change = ((kpi.value - mean) / abs(mean) * 100) if mean != 0 else None
                         rca_list = get_root_cause_analysis(kpi.id, kpi.value, pseudo_change)

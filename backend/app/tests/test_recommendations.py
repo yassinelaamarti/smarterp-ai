@@ -214,11 +214,8 @@ class TestRecommendations(unittest.TestCase):
         mock_odoo.search_read.side_effect = Exception("Odoo XML-RPC error")
 
         res = get_root_cause_analysis("revenue", 10000.0, -10.0)
-        # Devrait retourner les données simulées
-        self.assertEqual(len(res), 3)
-        self.assertEqual(res[0]["dimension"], "Région")
-        self.assertEqual(res[0]["segment"], "Casablanca-Settat")
-        self.assertTrue(res[0]["delta"] < 0)
+        # Supprimé toute génération simulée fictive : doit retourner une liste vide
+        self.assertEqual(len(res), 0)
 
     def test_alert_engine_rca_integration(self):
         from app.services.alert_engine import evaluate_alerts
@@ -271,8 +268,8 @@ class TestRecommendations(unittest.TestCase):
         generate_recommendations(self.db, [alert])
 
         added_rec = self.db.add.call_args[0][0]
-        # Le garde-fou doit forcer 'none' au lieu de 'send_email_campaign'
-        self.assertEqual(added_rec.action_type, RecommendationAction.none)
+        # Le garde-fou doit forcer 'restock_order' (action autorisée sur stock) au lieu de 'send_email_campaign'
+        self.assertEqual(added_rec.action_type, RecommendationAction.restock_order)
 
     @patch("app.services.recommendation_generator.odoo")
     def test_auto_expiration_of_resolved_anomalies(self, mock_odoo):

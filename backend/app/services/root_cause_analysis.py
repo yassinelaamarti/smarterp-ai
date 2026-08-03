@@ -29,15 +29,15 @@ KPI_LABELS = {
 def format_segment_label(dimension: str, segment_raw: str) -> str:
     """
     Fonction unique de formatage des libellés de segments.
-    Nettoie les doubles préfixes (ex: 'Catégorie client : Client : Wood Corner' -> 'Client Wood Corner').
+    Nettoie les préfixes (ex: 'Région Casablanca-Settat' -> 'Casablanca-Settat', 'California (US)' -> 'California').
     """
     if not segment_raw:
         return ""
     
     clean = str(segment_raw).strip()
     for prefix in [
-        "Catégorie client : Client : ", "Catégorie client : ", "Client : ",
-        "Catégorie : ", "Région : ", "Commercial : ", "Étape : ", "Produit : "
+        "Catégorie client : Client : ", "Catégorie client : ", "Client : ", "Client ",
+        "Catégorie : ", "Catégorie ", "Région : ", "Région ", "Commercial : ", "Commercial ", "Étape : ", "Produit : ", "Produit "
     ]:
         if clean.startswith(prefix):
             clean = clean[len(prefix):].strip()
@@ -45,16 +45,6 @@ def format_segment_label(dimension: str, segment_raw: str) -> str:
     if clean.endswith(" (US)"):
         clean = clean[:-5].strip()
 
-    dim_clean = {
-        "region": "Région",
-        "product": "Produit",
-        "sales_rep": "Commercial",
-        "customer_category": "Client",
-        "customer": "Client",
-    }.get(dimension.lower(), dimension)
-
-    if dim_clean and not clean.startswith(dim_clean):
-        return f"{dim_clean} {clean}"
     return clean
 
 
@@ -78,19 +68,28 @@ def compute_root_cause_data(
     period_previous: str = "Mois précédent"
 ) -> dict:
     """
-    Calcule la décomposition rigoureuse d'un KPI.
-    - FULL OUTER JOIN sur les segments.
-    - contribution_pct exprimée de façon sécurisée (bornée entre -100% et 100%).
-    - Sécurité division par zéro et protection contre delta_total proche de zéro.
+    Calcule la décomposition réelle d'un KPI depuis Odoo.
+    Si la décomposition n'est pas calculable pour cette entité (pas de décomposition par segment ou ID non reconnu),
+    retourne un résultat explicite avec breakdown vide et message clair.
     """
+    kpi_name = KPI_LABELS.get(kpi_id, kpi_id)
     try:
         real_data = _run_real_rca_decomposition(kpi_id, current_value, change_percent, period_current, period_previous)
         if real_data and real_data.get("breakdown"):
             return real_data
     except Exception as e:
-        logger.warning(f"Échec décomposition réelle Odoo pour {kpi_id}: {e}. Passage en simulation rigoureuse.")
+        logger.warning(f"Note décomposition réelle Odoo pour {kpi_id}: {e}.")
 
-    return _generate_rigorous_simulated_rca(kpi_id, current_value, change_percent, period_current, period_previous)
+    return {
+        "kpi_name": kpi_name,
+        "period_current": period_current,
+        "period_previous": period_previous,
+        "delta_total": 0.0,
+        "delta_total_pct": 0.0,
+        "breakdown": [],
+        "residual_pct": 0.0,
+        "message": "Aucune décomposition disponible pour cette entité"
+    }
 
 
 def _run_real_rca_decomposition(
@@ -100,7 +99,8 @@ def _run_real_rca_decomposition(
     period_current: str,
     period_previous: str
 ) -> Optional[dict]:
-    if kpi_id in ["avg_order_value", "conversion_rate"]:
+    ALLOWED_RCA_KPIS = {"revenue", "new_orders", "active_customers", "new_leads", "late_orders", "unpaid_invoices"}
+    if kpi_id not in ALLOWED_RCA_KPIS:
         return None
 
     kpi_name = KPI_LABELS.get(kpi_id, kpi_id)
@@ -508,79 +508,7 @@ def _run_real_rca_decomposition(
     }
 
 
-def _generate_rigorous_simulated_rca(
-    kpi_id: str,
-    current_value: float,
-    change_percent: Optional[float],
-    period_current: str,
-    period_previous: str
-) -> dict:
-    """Génère des contributions mathématiquement cohérentes et rigoureuses pour les démos ou fallbacks."""
-    kpi_name = KPI_LABELS.get(kpi_id, kpi_id)
-    delta_total_pct = change_percent if change_percent is not None else (-8.5 if current_value <= 0 else 5.2)
 
-    if abs(current_value) > 1e-6:
-        delta_total = round((current_value * (delta_total_pct / 100.0)), 2)
-    else:
-        delta_total = -4200.0 if delta_total_pct < 0 else 3500.0
-
-    is_positive = delta_total >= 0
-
-    if kpi_id == "revenue":
-        raw_factors = [
-            {"dimension": "region", "segment": "Région Casablanca-Settat", "ratio": 0.625},
-            {"dimension": "product", "segment": "Catégorie Mobilier de bureau", "ratio": 0.268},
-            {"dimension": "sales_rep", "segment": "Commercial Marc Demo", "ratio": 0.080},
-        ]
-    elif kpi_id == "new_orders":
-        raw_factors = [
-            {"dimension": "region", "segment": "Région Rabat-Salé-Kénitra", "ratio": 0.550},
-            {"dimension": "product", "segment": "Produit Chaise de bureau", "ratio": 0.300},
-            {"dimension": "sales_rep", "segment": "Commercial Karim B.", "ratio": 0.100},
-        ]
-    elif kpi_id == "active_customers":
-        raw_factors = [
-            {"dimension": "region", "segment": "Région Tanger-Tétouan", "ratio": 0.500},
-            {"dimension": "customer_category", "segment": "Client PME locales", "ratio": 0.300},
-            {"dimension": "sales_rep", "segment": "Commercial Marc Demo", "ratio": 0.120},
-        ]
-    elif kpi_id == "new_leads":
-        raw_factors = [
-            {"dimension": "region", "segment": "Région Marrakech-Safi", "ratio": 0.480},
-            {"dimension": "customer_category", "segment": "Client Grands Comptes", "ratio": 0.320},
-            {"dimension": "sales_rep", "segment": "Commercial Sophie L.", "ratio": 0.150},
-        ]
-    else:
-        raw_factors = [
-            {"dimension": "region", "segment": "Région Casablanca-Settat", "ratio": 0.600},
-            {"dimension": "product", "segment": "Produit Phare", "ratio": 0.250},
-            {"dimension": "sales_rep", "segment": "Commercial Marc Demo", "ratio": 0.100},
-        ]
-
-    breakdown = []
-    sum_contrib = 0.0
-    for f in raw_factors:
-        c_pct = round(f["ratio"] * 100.0, 1) if is_positive else round(-f["ratio"] * 100.0, 1)
-        seg_delta = round(delta_total * f["ratio"], 2)
-        sum_contrib += abs(c_pct)
-        breakdown.append({
-            "dimension": f["dimension"],
-            "segment": format_segment_label(f["dimension"], f["segment"]),
-            "delta": seg_delta,
-            "contribution_pct": c_pct
-        })
-
-    residual_pct = round(max(0.0, 100.0 - sum_contrib), 1)
-
-    return {
-        "kpi_name": kpi_name,
-        "period_current": period_current,
-        "period_previous": period_previous,
-        "delta_total": delta_total,
-        "delta_total_pct": round(delta_total_pct, 1),
-        "breakdown": breakdown,
-        "residual_pct": residual_pct
-    }
 
 
 def generate_rca_explanation(rca_result: dict) -> str:

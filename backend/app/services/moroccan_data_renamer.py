@@ -122,5 +122,85 @@ def run_moroccan_renaming():
     print("=== MAROCANISATION RÉUSSIE AVEC SÉCURITÉ TOTALE ===")
     print("=================================================================")
 
+
+def run_revert_moroccan_renaming():
+    """Restaure l'intégralité des données Odoo à leurs noms d'origine."""
+    from app.services.root_cause_analysis import _rca_cache
+    from app.models.ai_recommendation import AIRecommendation, RecommendationStatus
+    import app.main
+
+    print("=================================================================")
+    print("=== RESTAURATION SÉCURISÉE DES DONNÉES ODOO D'ORIGINE ===")
+    print("=================================================================")
+
+    restored_log = []
+
+    # Inversion des mappings
+    reverse_states = {v: k for k, v in MAPPING_LOG["states"].items()}
+    reverse_partners = {v: k for k, v in MAPPING_LOG["partners"].items()}
+    reverse_users = {v: k for k, v in MAPPING_LOG["users"].items()}
+    reverse_products = {v: k for k, v in MAPPING_LOG["products"].items()}
+
+    # 1. Régions / États
+    states = odoo.search_read("res.country.state", [], ["id", "name"]) or []
+    for s in states:
+        curr = s["name"]
+        if curr in reverse_states:
+            orig = reverse_states[curr]
+            odoo.write("res.country.state", [s["id"]], {"name": orig})
+            restored_log.append(f"State ID {s['id']}: '{curr}' -> '{orig}'")
+            print(f"  [State ID {s['id']}] '{curr}' -> '{orig}'")
+
+    # 2. Clients / Sociétés
+    partners = odoo.search_read("res.partner", [], ["id", "name"]) or []
+    for p in partners:
+        curr = p["name"]
+        if curr in reverse_partners:
+            orig = reverse_partners[curr]
+            odoo.write("res.partner", [p["id"]], {"name": orig})
+            restored_log.append(f"Partner ID {p['id']}: '{curr}' -> '{orig}'")
+            print(f"  [Partner ID {p['id']}] '{curr}' -> '{orig}'")
+
+    # 3. Commerciaux / Utilisateurs
+    users = odoo.search_read("res.users", [], ["id", "name"]) or []
+    for u in users:
+        curr = u["name"]
+        if curr in reverse_users:
+            orig = reverse_users[curr]
+            odoo.write("res.users", [u["id"]], {"name": orig})
+            restored_log.append(f"User ID {u['id']}: '{curr}' -> '{orig}'")
+            print(f"  [User ID {u['id']}] '{curr}' -> '{orig}'")
+
+    # 4. Produits
+    products = odoo.search_read("product.template", [], ["id", "name"]) or []
+    for pr in products:
+        curr = pr["name"]
+        for moroccan_name, orig in reverse_products.items():
+            if moroccan_name in curr or curr == moroccan_name:
+                odoo.write("product.template", [pr["id"]], {"name": orig})
+                restored_log.append(f"Product ID {pr['id']}: '{curr}' -> '{orig}'")
+                print(f"  [Product ID {pr['id']}] '{curr}' -> '{orig}'")
+                break
+
+    # 5. Purge du cache RCA et des recommandations pending
+    _rca_cache.clear()
+    db = SessionLocal()
+    try:
+        pending_recs = db.query(AIRecommendation).filter(AIRecommendation.status == RecommendationStatus.pending).all()
+        for r in pending_recs:
+            db.delete(r)
+        db.commit()
+        print(f"[OK] Cache RCA vidé et {len(pending_recs)} recommandations pending purgées.")
+    finally:
+        db.close()
+
+    # 6. Resynchronisation totale
+    print("\nResynchronisation complète via sync_all()...")
+    sync_all()
+    print("[OK] Données Odoo d'origine restaurées et synchronisées avec succès.")
+
+    return restored_log
+
+
 if __name__ == "__main__":
     run_moroccan_renaming()

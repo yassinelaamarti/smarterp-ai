@@ -59,7 +59,7 @@ ALLOWED_ACTIONS_PER_DOMAIN = {
     "stock": ["restock_order", "none"],
     "customer": ["send_email_campaign", "none"],
     "customer_inactive": ["send_email_campaign", "none"],
-    "crm": ["create_crm_activity", "none"],
+    "crm": ["send_email_campaign", "create_crm_activity", "none"],
 }
 
 # Mapping explicite et exhaustif des KPIs vers leurs domaines métiers respectifs
@@ -81,6 +81,8 @@ KPI_TO_DOMAIN = {
 
     # Opérations & Logistique
     "late_orders": "global_trend",
+    "unpaid_invoices": "global_trend",
+    "unpaid_invoices_count": "global_trend",
 }
 
 # Libellés lisibles des KPIs pour les fallbacks non-stock
@@ -95,11 +97,47 @@ KPI_LABELS = {
     "pipeline_value": "Pipeline CRM",
     "active_customers": "Clients actifs",
     "late_orders": "Commandes en retard",
+    "unpaid_invoices": "Factures impayées",
+    "unpaid_invoices_count": "Factures impayées",
 }
 
 
 def _get_allowed_actions_for_domain(domain: str) -> list[str]:
     return ALLOWED_ACTIONS_PER_DOMAIN.get(domain, ["none"])
+
+
+def _fetch_target_partner_ids_for_campaign(entity_key: str = None, data: dict = None) -> list[int]:
+    """
+    Récupère de manière déterministe les partner_ids Odoo réels pour les campagnes d'emails.
+    Critère métier :
+    - Clients (res.partner) possédant un email valide (email != False).
+    - Exclut les clients ayant passé une commande validée (sale.order état 'sale'/'done')
+      au cours des 60 derniers jours (cibles d'attrition et de réactivation).
+    - Fallback : Si moins de 3 clients répondent au seuil de 60j, sélectionne les clients les plus anciens avec email.
+    """
+    try:
+        cutoff = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d 00:00:00")
+        recent_orders = odoo.search_read(
+            "sale.order",
+            [["date_order", ">=", cutoff], ["state", "in", ["sale", "done"]]],
+            ["partner_id"]
+        ) or []
+        recent_pids = {o["partner_id"][0] for o in recent_orders if o.get("partner_id")}
+
+        all_partners = odoo.search_read(
+            "res.partner",
+            [["email", "!=", False]],
+            ["id", "name", "email"]
+        ) or []
+
+        inactive_pids = [p["id"] for p in all_partners if p["id"] not in recent_pids]
+        if len(inactive_pids) >= 3:
+            return inactive_pids[:10]
+
+        return [p["id"] for p in all_partners[:10]]
+    except Exception as e:
+        logger.error(f"Erreur lors de la recherche Odoo des partner_ids pour campagne email : {e}")
+        return []
 
 
 def _resolve_domain_from_entity_key(entity_key: str, data: dict = None, alert: Alert = None) -> str:
@@ -119,7 +157,9 @@ def _resolve_domain_from_entity_key(entity_key: str, data: dict = None, alert: A
     elif data and "kpi_id" in data:
         clean_kpi_id = data["kpi_id"]
     else:
-        clean_kpi_id = entity_key.replace("anomaly_", "", 1) if entity_key.startswith("anomaly_") else entity_key
+        clean_kpi_id = entity_key
+        while clean_kpi_id.startswith("anomaly_"):
+            clean_kpi_id = clean_kpi_id[8:]
         for suffix in ["_drop", "_increase", "_alerts", "_critical", "_warning"]:
             if clean_kpi_id.endswith(suffix) and clean_kpi_id not in KPI_TO_DOMAIN:
                 clean_kpi_id = clean_kpi_id[:-len(suffix)]
@@ -227,14 +267,14 @@ def _generate_fallback_data(db: Session, entity_item: dict) -> dict:
     elif "kpi_id" in data:
         clean_kpi_id = data["kpi_id"]
     else:
-        clean_kpi_id = entity_key.replace("anomaly_", "", 1) if entity_key.startswith("anomaly_") else entity_key
+        clean_kpi_id = entity_key
+        while clean_kpi_id.startswith("anomaly_"):
+            clean_kpi_id = clean_kpi_id[8:]
         for suffix in ["_drop", "_increase", "_alerts", "_critical", "_warning"]:
             if clean_kpi_id.endswith(suffix) and clean_kpi_id not in KPI_LABELS:
                 clean_kpi_id = clean_kpi_id[:-len(suffix)]
 
     kpi_label = KPI_LABELS.get(clean_kpi_id, "Anomalie")
-
-
 
     if domain == "stock":
         critical_setting = db.query(AlertSetting).filter(AlertSetting.key == "stock_critical").first()
@@ -244,6 +284,15 @@ def _generate_fallback_data(db: Session, entity_item: dict) -> dict:
         product_id = data.get("id")
         product_name = data.get("name", entity_key)
         lst_price = data.get("lst_price", 100.0)
+
+        if qty_available >= critical_threshold:
+            return {
+                "title": f"Aucune action requise pour {product_name}",
+                "explanation": f"Le produit {product_name} dispose d'un stock suffisant ({int(qty_available)} unité(s)).",
+                "action_type": "none",
+                "action_payload": {},
+                "estimated_impact": {"label": "Stock suffisant", "confidence": "high"}
+            }
 
         suggested_qty = max(int(critical_threshold - qty_available + 5), 5)
         estimated_impact_value = suggested_qty * lst_price
@@ -546,15 +595,35 @@ def _save_single_recommendation(
 
     parsed_action_type = data_dict.get("action_type", "none")
     if parsed_action_type not in allowed_actions:
-        logger.warning(f"Action '{parsed_action_type}' non autorisée pour le domaine '{domain}'. Fallback sur 'none'.")
-        parsed_action_type = "none"
+        logger.warning(f"Action '{parsed_action_type}' non autorisée pour le domaine '{domain}'. Fallback sur action autorisée.")
+        parsed_action_type = "restock_order" if domain == "stock" else "none"
 
     try:
         action_enum = RecommendationAction(parsed_action_type)
     except ValueError:
         action_enum = RecommendationAction.none
 
-    clean_kpi_id = entity_key.replace("anomaly_", "", 1) if entity_key.startswith("anomaly_") else entity_key
+    # RÈGLE STRICTE : Pour les produits physiques (entity_key.startswith("product_")), si l'action est 'none' (stock suffisant,
+    # aucun réapprovisionnement nécessaire), ne PAS générer ni persister de carte du tout.
+    if entity_key.startswith("product_") and action_enum == RecommendationAction.none:
+        if existing:
+            existing.status = RecommendationStatus.expired
+            db.commit()
+            logger.info(f"Produit {entity_key} avec stock suffisant : carte existante expirée/purgée.")
+        return
+
+    action_payload = data_dict.get("action_payload", {}) or {}
+    if action_enum == RecommendationAction.send_email_campaign:
+        pids = action_payload.get("partner_ids") or action_payload.get("customer_ids")
+        if not pids or not isinstance(pids, list) or len(pids) == 0:
+            target_pids = _fetch_target_partner_ids_for_campaign(entity_key, data_dict)
+            action_payload["partner_ids"] = target_pids
+            if "campaign_subject" not in action_payload:
+                action_payload["campaign_subject"] = "Campagne de relance & réactivation clients — SmartERP AI"
+
+    clean_kpi_id = entity_key
+    while clean_kpi_id.startswith("anomaly_"):
+        clean_kpi_id = clean_kpi_id[8:]
     kpi_label = KPI_LABELS.get(clean_kpi_id, "Anomalie")
     default_title = f"Analyse IA temporairement indisponible — {kpi_label}" if domain != "stock" else f"Action pour {entity_key}"
 
@@ -565,7 +634,7 @@ def _save_single_recommendation(
         existing.explanation = data_dict.get("explanation", existing.explanation)
         existing.source_type = source_type
         existing.action_type = action_enum
-        existing.action_payload = data_dict.get("action_payload", {})
+        existing.action_payload = action_payload
         existing.estimated_impact = estimated_impact
         existing.expires_at = datetime.utcnow() + timedelta(days=7)
         db.commit()
@@ -580,7 +649,7 @@ def _save_single_recommendation(
             title=data_dict.get("title", default_title),
             explanation=data_dict.get("explanation", "Anomalie ou alerte détectée"),
             action_type=action_enum,
-            action_payload=data_dict.get("action_payload", {}),
+            action_payload=action_payload,
             estimated_impact=estimated_impact,
             status=RecommendationStatus.pending,
             created_at=datetime.utcnow(),
