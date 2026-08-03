@@ -67,6 +67,8 @@ export function RecommendationsList() {
         return <Mail className="h-4 w-4 text-blue-600" />;
       case "create_crm_activity":
         return <Users className="h-4 w-4 text-purple-600" />;
+      case "create_follow_up_activity":
+        return <TrendingUp className="h-4 w-4 text-rose-600" />;
       default:
         return <Info className="h-4 w-4 text-indigo-600" />;
     }
@@ -80,6 +82,8 @@ export function RecommendationsList() {
         return `Campagne Email (${payload?.partner_ids?.length || 0} clients)`;
       case "create_crm_activity":
         return `Planifier Activité CRM`;
+      case "create_follow_up_activity":
+        return `Relancer livraison (Odoo)`;
       default:
         return "Analyse & Diagnostic Informatif";
     }

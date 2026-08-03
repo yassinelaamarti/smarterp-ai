@@ -15,6 +15,7 @@ class RecommendationAction(str, enum.Enum):
     restock_order = "restock_order"
     send_email_campaign = "send_email_campaign"
     create_crm_activity = "create_crm_activity"
+    create_follow_up_activity = "create_follow_up_activity"
     none = "none"
 
 
