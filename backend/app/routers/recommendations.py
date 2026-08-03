@@ -68,6 +68,7 @@ def get_recommendations_audit(
             "title": title,
             "action_type": log.action_type.value,
             "action_payload": log.action_payload,
+            "odoo_result": log.odoo_result,
             "estimated_impact": estimated_impact,
             "status": status,
             "executed_by_name": user.full_name or user.email,

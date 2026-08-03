@@ -31,6 +31,7 @@ class AIRecommendationAuditSchema(BaseModel):
     title: str
     action_type: str
     action_payload: Optional[dict[str, Any]] = None
+    odoo_result: Optional[dict[str, Any]] = None
     estimated_impact: Optional[dict[str, Any]] = None
     status: str
     executed_by_name: Optional[str] = None
