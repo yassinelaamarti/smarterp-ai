@@ -180,26 +180,17 @@ class OdooActionService:
             if not user_exists:
                 raise OdooActionValidationError(f"L'utilisateur Odoo assigne (ID: {assigned_user_id}) n'existe pas ou n'est pas actif.")
 
-            # Valider que le lead/opportunité existe dans Odoo
+            # Valider que le lead/opportunité existe dans Odoo (directement ou via un partner_id ayant une opportunité active)
             is_lead = odoo.search_count("crm.lead", [["id", "=", lead_id]])
             if is_lead > 0:
                 target_lead_id = lead_id
             else:
-                # Sinon chercher un lead lié à ce partner_id
+                # Sinon chercher une opportunité active liée à ce partner_id
                 leads = odoo.search_read("crm.lead", [["partner_id", "=", lead_id], ["active", "=", True]], ["id"], limit=1)
                 if leads:
                     target_lead_id = leads[0]["id"]
                 else:
-                    partner_info = odoo.search_read("res.partner", [["id", "=", lead_id]], ["name"], limit=1)
-                    if not partner_info:
-                        raise OdooActionValidationError(f"Le lead ou partenaire d'ID {lead_id} n'existe pas dans Odoo.")
-                    partner_name = partner_info[0]["name"]
-                    target_lead_id = odoo.create("crm.lead", {
-                        "name": f"Opportunite IA - {partner_name}",
-                        "partner_id": lead_id,
-                        "type": "opportunity",
-                        "user_id": assigned_user_id
-                    })
+                    raise OdooActionValidationError(f"Aucune opportunite CRM existante pour ce partenaire (ID: {lead_id}) dans Odoo — impossible de planifier une activite sans opportunite associee.")
 
             # Récupérer l'ir.model ID pour crm.lead
             try:
