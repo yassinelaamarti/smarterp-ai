@@ -61,6 +61,8 @@ ALLOWED_ACTIONS_PER_DOMAIN = {
     "customer": ["send_email_campaign", "none"],
     "customer_inactive": ["send_email_campaign", "none"],
     "crm": ["send_email_campaign", "create_crm_activity", "none"],
+    "revenue_trend": ["send_email_campaign", "none"],
+    "global_trend": ["send_email_campaign", "none"],
 }
 
 # Mapping explicite et exhaustif des KPIs vers leurs domaines métiers respectifs
@@ -336,6 +338,39 @@ def _generate_fallback_data(db: Session, entity_item: dict) -> dict:
                 "action_payload": {},
                 "estimated_impact": {"label": "Impact non estimé", "confidence": "low"}
             }
+    elif entity_key.startswith("email_campaign_segment_") or "partner_ids" in data:
+        pids = data.get("partner_ids", [])
+        if len(causes) > 1:
+            labels = []
+            for c in causes:
+                al = c.get("alert")
+                ck = c.get("entity_key", "")
+                if al and hasattr(al, "kpi_id") and al.kpi_id:
+                    ck = al.kpi_id
+                while ck.startswith("anomaly_"):
+                    ck = ck[8:]
+                for suffix in ["_drop", "_increase", "_alerts", "_critical", "_warning"]:
+                    if ck.endswith(suffix) and ck not in KPI_LABELS:
+                        ck = ck[:-len(suffix)]
+                lbl = KPI_LABELS.get(ck, ck)
+                if lbl not in labels:
+                    labels.append(lbl)
+            causes_summary = ", ".join(labels)
+            return {
+                "title": f"Réactiver les clients inactifs — {causes_summary} en baisse",
+                "explanation": f"Combinaison de {len(causes)} signaux d'anomalies détectés ({causes_summary}). Une campagne d'email unique est recommandée pour réactiver ce segment de clients sans les surcharger.",
+                "action_type": "send_email_campaign",
+                "action_payload": {"partner_ids": pids, "template": "winback_multi_cause"},
+                "estimated_impact": {"label": f"+{len(pids)*1500} MAD préservé", "confidence": "high"}
+            }
+        else:
+            return {
+                "title": f"Réactiver les clients inactifs — {kpi_label}",
+                "explanation": f"Anomalie détectée sur {kpi_label}. Une campagne de relance par email est suggérée pour le segment ciblé.",
+                "action_type": "send_email_campaign",
+                "action_payload": {"partner_ids": pids, "template": "winback"},
+                "estimated_impact": {"label": f"+{len(pids)*1500} MAD préservé", "confidence": "medium"}
+            }
     else:
         return {
             "title": f"Analyse IA temporairement indisponible — {kpi_label}",
@@ -547,9 +582,76 @@ def generate_recommendations(
             })
 
 
-    # 1.5 Fusion par entity_key et détermination déterministe du domaine
-    grouped_by_entity = {}
+    # 1.5 Segmentation, Fusion UNION (>50%) et Soustraction des partner_ids des Campagnes Email
+    email_candidates = []
+    other_anomalies = []
+
     for item in all_anomalies:
+        ekey = item["entity_key"]
+        domain = _resolve_domain_from_entity_key(ekey, item["data"])
+        allowed = _get_allowed_actions_for_domain(domain)
+
+        if "send_email_campaign" in allowed and not ekey.startswith("product_") and not ekey.startswith("late_order_"):
+            email_candidates.append(item)
+        else:
+            other_anomalies.append(item)
+
+    email_segment_groups = []
+    for item in email_candidates:
+        pids_list = item.get("data", {}).get("partner_ids") or _fetch_target_partner_ids_for_campaign(item["entity_key"], item["data"])
+        candidate_pids = set(pids_list)
+
+        if not candidate_pids:
+            other_anomalies.append(item)
+            continue
+
+        matched_seg = None
+        for seg in email_segment_groups:
+            intersection = candidate_pids & seg["partner_ids"]
+            min_len = min(len(candidate_pids), len(seg["partner_ids"]))
+            overlap_ratio = (len(intersection) / min_len) if min_len > 0 else 0.0
+
+            if overlap_ratio > 0.50:
+                matched_seg = seg
+                break
+
+        if matched_seg:
+            # Overlap > 50% : FUSION (UNION des partner_ids)
+            matched_seg["partner_ids"].update(candidate_pids)
+            matched_seg["causes"].append(item)
+            if item["source_type"] == RecommendationSource.anomaly:
+                matched_seg["source_type"] = RecommendationSource.anomaly
+        else:
+            # Overlap <= 50% : Soustraction des partner_ids déjà couverts par tous les segments précédents du cycle
+            all_covered = set().union(*(s["partner_ids"] for s in email_segment_groups)) if email_segment_groups else set()
+            uncovered = candidate_pids - all_covered
+
+            if uncovered:
+                seg_idx = len(email_segment_groups) + 1
+                new_seg = {
+                    "entity_key": f"email_campaign_segment_{seg_idx}",
+                    "source_id": f"email_campaign_segment_{seg_idx}",
+                    "source_type": item["source_type"],
+                    "domain": "customer_inactive",
+                    "partner_ids": uncovered,
+                    "causes": [item]
+                }
+                email_segment_groups.append(new_seg)
+
+    grouped_by_entity = {}
+
+    for seg in email_segment_groups:
+        ekey = seg["entity_key"]
+        grouped_by_entity[ekey] = {
+            "entity_key": ekey,
+            "source_id": seg["source_id"],
+            "source_type": seg["source_type"],
+            "domain": seg["domain"],
+            "data": {"partner_ids": list(seg["partner_ids"])},
+            "causes": seg["causes"]
+        }
+
+    for item in other_anomalies:
         ekey = item["entity_key"]
         resolved_domain = _resolve_domain_from_entity_key(ekey, item["data"])
 
@@ -643,7 +745,8 @@ def generate_recommendations(
             source_type=item["source_type"],
             domain=domain,
             data_dict=rec_data,
-            allowed_actions=allowed_actions
+            allowed_actions=allowed_actions,
+            item_data=item.get("data")
         )
 
     # 8. Expiration des anomalies résolues ou basculées par entity_key
@@ -658,7 +761,8 @@ def _save_single_recommendation(
     source_type: RecommendationSource,
     domain: str,
     data_dict: dict,
-    allowed_actions: list[str]
+    allowed_actions: list[str],
+    item_data: dict = None
 ):
     existing = db.query(AIRecommendation).filter(
         AIRecommendation.tenant_id == tenant_id,
@@ -696,12 +800,15 @@ def _save_single_recommendation(
 
     action_payload = data_dict.get("action_payload", {}) or {}
     if action_enum == RecommendationAction.send_email_campaign:
-        pids = action_payload.get("partner_ids") or action_payload.get("customer_ids")
-        if not pids or not isinstance(pids, list) or len(pids) == 0:
-            target_pids = _fetch_target_partner_ids_for_campaign(entity_key, data_dict)
-            action_payload["partner_ids"] = target_pids
-            if "campaign_subject" not in action_payload:
-                action_payload["campaign_subject"] = "Campagne de relance & réactivation clients — SmartERP AI"
+        if item_data and "partner_ids" in item_data:
+            action_payload["partner_ids"] = item_data["partner_ids"]
+        else:
+            pids = action_payload.get("partner_ids") or action_payload.get("customer_ids")
+            if not pids or not isinstance(pids, list) or len(pids) == 0:
+                target_pids = _fetch_target_partner_ids_for_campaign(entity_key, data_dict)
+                action_payload["partner_ids"] = target_pids
+        if "campaign_subject" not in action_payload:
+            action_payload["campaign_subject"] = "Campagne de relance & réactivation clients — SmartERP AI"
 
     if action_enum == RecommendationAction.create_follow_up_activity:
         if not action_payload.get("order_id") and data_dict.get("order_id"):
