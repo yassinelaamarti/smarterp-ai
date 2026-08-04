@@ -159,7 +159,7 @@ export function RecommendationsList() {
                 </div>
 
                 {/* Content */}
-                <h3 className="mt-3 text-sm font-bold text-slate-800 leading-snug">
+                <h3 className="mt-3 text-sm font-bold text-slate-800 leading-snug line-clamp-2" title={rec.title}>
                   {rec.title}
                 </h3>
                 <p className="mt-2 text-xs leading-relaxed text-slate-550">

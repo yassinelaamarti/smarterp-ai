@@ -31,9 +31,9 @@ RÈGLES D'ACTION STRICTES SELON LE DOMAINE :
 1. Domaine "stock" (rupture, stock bas) :
    - Tu peux proposer action_type = "restock_order"
    - Le champ action_payload DOIT contenir "product_id" (entier) et "quantity" (entier suggéré pour réapprovisionner).
-2. Domaine "customer_inactive" (baisse de CA, attrition client) :
+2. Domaine "customer_inactive" / "customer" / "revenue_trend" (baisse de CA, attrition client, réactivation) :
    - Tu peux proposer action_type = "send_email_campaign"
-   - Le champ action_payload DOIT contenir "segment_id" ou "customer_ids" et "template".
+   - Pour les entités récapitulant plusieurs anomalies (causes multiples), cite au maximum les 2 causes principales dans le titre (ex: "Réactiver les clients inactifs — Chiffre d'affaires, Nouvelles commandes et 4 autres facteurs en baisse"), et détaille l'ensemble des anomalies dans le champ explanation.
 3. Domaine "crm" (opportunités stagnantes, pipeline en baisse) :
    - Tu peux proposer action_type = "create_crm_activity"
    - Le champ action_payload DOIT contenir "lead_id" et "summary".
@@ -341,8 +341,9 @@ def _generate_fallback_data(db: Session, entity_item: dict) -> dict:
     elif entity_key.startswith("email_campaign_segment_") or "partner_ids" in data:
         pids = data.get("partner_ids", [])
         if len(causes) > 1:
+            sorted_causes = sorted(causes, key=lambda c: _compute_priority_score(c), reverse=True)
             labels = []
-            for c in causes:
+            for c in sorted_causes:
                 al = c.get("alert")
                 ck = c.get("entity_key", "")
                 if al and hasattr(al, "kpi_id") and al.kpi_id:
@@ -355,10 +356,19 @@ def _generate_fallback_data(db: Session, entity_item: dict) -> dict:
                 lbl = KPI_LABELS.get(ck, ck)
                 if lbl not in labels:
                     labels.append(lbl)
-            causes_summary = ", ".join(labels)
+
+            if len(labels) > 2:
+                top_labels = ", ".join(labels[:2])
+                others_count = len(labels) - 2
+                facteur_str = "autre facteur" if others_count == 1 else "autres facteurs"
+                causes_title_summary = f"{top_labels} et {others_count} {facteur_str}"
+            else:
+                causes_title_summary = " et ".join(labels)
+
+            all_causes_str = ", ".join(labels)
             return {
-                "title": f"Réactiver les clients inactifs — {causes_summary} en baisse",
-                "explanation": f"Combinaison de {len(causes)} signaux d'anomalies détectés ({causes_summary}). Une campagne d'email unique est recommandée pour réactiver ce segment de clients sans les surcharger.",
+                "title": f"Réactiver les clients inactifs — {causes_title_summary} en baisse",
+                "explanation": f"Combinaison de {len(causes)} signaux d'anomalies détectés ({all_causes_str}). Une campagne d'email unique est recommandée pour réactiver ce segment de clients sans les surcharger.",
                 "action_type": "send_email_campaign",
                 "action_payload": {"partner_ids": pids, "template": "winback_multi_cause"},
                 "estimated_impact": {"label": f"+{len(pids)*1500} MAD préservé", "confidence": "high"}
