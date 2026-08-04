@@ -96,8 +96,15 @@ def execute_recommendation(
         raise HTTPException(status_code=400, detail=f"Cette recommandation a déjà été traitée (statut: {rec.status.value}).")
 
     try:
-        # Exécuter l'action via le service de validation et d'intégration Odoo
-        res = OdooActionService.execute_action(rec.action_type.value, rec.action_payload, current_user, db)
+        # Enrichir le payload avec le titre et l'explication de la recommandation pour garantir le contexte à toutes les actions
+        exec_payload = {
+            **(rec.action_payload or {}),
+            "recommendation_title": rec.title,
+            "recommendation_explanation": rec.explanation,
+            "title": rec.title,
+            "explanation": rec.explanation
+        }
+        res = OdooActionService.execute_action(rec.action_type.value, exec_payload, current_user, db)
 
         # Créer le log d'audit en succès
         log = AIActionLog(

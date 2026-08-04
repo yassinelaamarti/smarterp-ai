@@ -81,7 +81,6 @@ class OdooActionService:
         elif action_type == "send_email_campaign":
             partner_ids = payload.get("partner_ids")
             template_id = payload.get("template_id")
-            campaign_subject = payload.get("campaign_subject", "Relance client")
 
             if not partner_ids or not isinstance(partner_ids, list):
                 raise OdooActionValidationError("Le parametre 'partner_ids' doit etre une liste d'entiers valides.")
@@ -100,18 +99,6 @@ class OdooActionService:
                 if not partner.get("email"):
                     raise OdooActionValidationError(f"Le partenaire '{partner['name']}' (ID: {partner['id']}) n'a pas d'adresse email renseignee dans Odoo.")
 
-            # Tenter de charger le template de mail si template_id est fourni
-            subject = campaign_subject
-            body_html = "<p>Bonjour,</p><p>Nous vous contactons dans le cadre de notre campagne de relance.</p>"
-            if template_id:
-                try:
-                    tmpl = odoo.search_read("mail.template", [["id", "=", template_id]], ["subject", "body_html"], limit=1)
-                    if tmpl:
-                        subject = tmpl[0].get("subject") or subject
-                        body_html = tmpl[0].get("body_html") or body_html
-                except Exception as e:
-                    logger.warning(f"Impossible de lire le template de mail {template_id} dans Odoo: {e}")
-
             # Récupérer l'adresse email de la société dans Odoo (res.company) ou de la payload
             email_from = payload.get("email_from")
             if not email_from:
@@ -127,6 +114,27 @@ class OdooActionService:
             # Créer les e-mails dans la file d'attente d'Odoo (mail.mail avec state='outgoing')
             mail_ids = []
             for partner in partners_data:
+                partner_name = partner.get("name") or f"Client #{partner['id']}"
+
+                # Génération dynamique et nominative de l'objet et du corps pour chaque partenaire selon l'objectif réel
+                if template_id:
+                    try:
+                        tmpl = odoo.search_read("mail.template", [["id", "=", template_id]], ["subject", "body_html"], limit=1)
+                        if tmpl:
+                            subj_tmpl = tmpl[0].get("subject") or payload.get("campaign_subject")
+                            body_tmpl = tmpl[0].get("body_html") or ""
+                            subject, body_html = OdooActionService._generate_personalized_email(
+                                {**payload, "campaign_subject": subj_tmpl, "campaign_body": body_tmpl},
+                                partner_name
+                            )
+                        else:
+                            subject, body_html = OdooActionService._generate_personalized_email(payload, partner_name)
+                    except Exception as e:
+                        logger.warning(f"Impossible de lire le template de mail {template_id} dans Odoo: {e}")
+                        subject, body_html = OdooActionService._generate_personalized_email(payload, partner_name)
+                else:
+                    subject, body_html = OdooActionService._generate_personalized_email(payload, partner_name)
+
                 try:
                     mail_vals = {
                         "subject": subject,
@@ -328,3 +336,144 @@ class OdooActionService:
             logger.error(f"Impossible de recuperer un partenaire Odoo : {e}")
 
         raise OdooActionValidationError("Aucun partenaire (fournisseur) trouve dans Odoo pour lier a la commande.")
+
+    @staticmethod
+    def _generate_personalized_email(payload: dict, partner_name: str) -> tuple[str, str]:
+        """
+        Génère un sujet et un corps d'email spécifiques et personnalisés au destinataire
+        selon l'objectif réel de la recommandation (Relance opportunité CRM, Prospection lead,
+        Fidélisation client actif, Vente/offre commerciale, Relance client inactif).
+        Applique un garde-fou strict anti-régression (rejette tout texte générique non personnalisé)
+        et anti-hallucination.
+        """
+        rec_title = (payload.get("recommendation_title") or payload.get("title") or "").strip()
+        rec_explanation = (payload.get("recommendation_explanation") or payload.get("explanation") or "").strip()
+        raw_subject = (payload.get("campaign_subject") or payload.get("subject") or "").strip()
+        raw_body = (payload.get("campaign_body") or payload.get("body_html") or payload.get("email_body") or "").strip()
+
+        title_lower = rec_title.lower()
+        exp_lower = rec_explanation.lower()
+        subject_lower = raw_subject.lower()
+        body_lower = raw_body.lower()
+
+        # Motif générique interdit (garde-fou anti-régression)
+        FORBIDDEN_PATTERNS = [
+            "nous vous contactons dans le cadre de notre campagne de relance",
+            "campagne de relance & réactivation clients",
+            "campagne de relance & reactivation clients",
+            "campagne de relance",
+            "relance client",
+        ]
+
+        is_body_forbidden = any(pat in body_lower for pat in FORBIDDEN_PATTERNS)
+        is_subject_forbidden = any(pat in subject_lower for pat in FORBIDDEN_PATTERNS)
+
+        # Déterminer l'objectif métier réel
+        # 1. Leads/Prospects à réactiver (Jamais convertis en clients -> Ton Prospection / Découverte)
+        if any(k in title_lower or k in exp_lower for k in ["lead", "prospect", "nouveaux leads", "générer de nouveaux leads", "prospection", "réactiver les leads", "relancer les leads"]):
+            objective = "prospection"
+        # 2. Relance opportunité CRM en cours (Négociation / Devis)
+        elif any(k in title_lower or k in exp_lower for k in ["opportunité", "crm", "relancer les opportunités", "négociation", "devis"]):
+            objective = "relance_opportunite"
+        # 3. Client inactif à réactiver (Ancien client qui n'a plus commandé -> Ton Winback / Réactivation commerciale)
+        elif any(k in title_lower or k in exp_lower for k in ["client inactif", "clients inactifs", "relancer les clients inactifs", "attrition", "réactivation client", "réactiver les clients"]):
+            objective = "relance_inactif"
+        # 4. Fidélisation client actif (Client actif à maintenir -> Ton Fidélité & Satisfaction)
+        elif any(k in title_lower or k in exp_lower for k in ["maintenir les clients actifs", "client actif", "fidélis", "satisfaction"]):
+            objective = "fidelisation"
+        # 5. Augmenter les ventes / nouvelles commandes
+        elif any(k in title_lower or k in exp_lower for k in ["augmenter les ventes", "générer de nouvelles commandes", "ventes", "offre", "commande"]):
+            objective = "ventes"
+        else:
+            objective = "general"
+
+        # Traitement / Construction du sujet
+        if not raw_subject or is_subject_forbidden:
+            if objective == "prospection":
+                subject = f"Découverte de nos solutions pour {partner_name}"
+            elif objective == "relance_opportunite":
+                subject = f"Suivi de notre proposition commerciale — {partner_name}"
+            elif objective == "fidelisation":
+                subject = f"Des nouvelles de notre partenariat avec {partner_name}"
+            elif objective == "ventes":
+                subject = f"Offre exclusive et opportunités pour {partner_name}"
+            elif objective == "relance_inactif":
+                subject = f"Reprise de contact avec {partner_name}"
+            else:
+                if rec_title:
+                    subject = f"{rec_title} — {partner_name}"
+                else:
+                    raise OdooActionValidationError("Échec de personnalisation du contenu email — action non exécutée : aucun sujet ni objectif valide disponible.")
+        else:
+            subject = raw_subject.replace("[Nom du client]", partner_name).replace("{partner_name}", partner_name)
+
+        # Traitement / Construction du corps de l'email
+        if not raw_body or is_body_forbidden:
+            if objective == "prospection":
+                body = (
+                    f"<p>Bonjour {partner_name},</p>"
+                    f"<p>Je me permets de prendre contact avec vous pour vous présenter nos solutions adaptées aux enjeux actuels de votre entreprise.</p>"
+                    f"<p>Nous accompagnons nos partenaires pour optimiser leur croissance et leur efficacité opérationnelle. Seriez-vous disponible pour un court échange afin d'en discuter ?</p>"
+                    f"<p>Bien cordialement,<br>L'équipe commerciale</p>"
+                )
+            elif objective == "relance_opportunite":
+                body = (
+                    f"<p>Bonjour {partner_name},</p>"
+                    f"<p>Je reviens vers vous suite à nos échanges concernant votre opportunité commerciale en cours.</p>"
+                    f"<p>Avez-vous eu l'occasion d'examiner notre proposition ? Je reste à votre entière disposition pour répondre à vos questions ou convenir d'un point de suivi.</p>"
+                    f"<p>Bien cordialement,<br>Votre chargé d'affaires</p>"
+                )
+            elif objective == "fidelisation":
+                body = (
+                    f"<p>Bonjour {partner_name},</p>"
+                    f"<p>Nous vous remercions chaleureusement pour votre confiance et votre fidélité au quotidien.</p>"
+                    f"<p>Afin de nous assurer que nos prestations répondent pleinement à vos exigences actuelles, n'hésitez pas à nous faire part de vos besoins ou de vos suggestions.</p>"
+                    f"<p>Bien cordialement,<br>L'équipe relation client</p>"
+                )
+            elif objective == "ventes":
+                body = (
+                    f"<p>Bonjour {partner_name},</p>"
+                    f"<p>Dans le cadre de l'optimisation de vos approvisionnements, nous vous proposons des offres dédiées adaptées à votre activité.</p>"
+                    f"<p>Nous vous invitons à nous contacter pour découvrir nos opportunités du moment et passer vos prochaines commandes dans les meilleures conditions.</p>"
+                    f"<p>Bien cordialement,<br>L'équipe commerciale</p>"
+                )
+            elif objective == "relance_inactif":
+                body = (
+                    f"<p>Bonjour {partner_name},</p>"
+                    f"<p>Sauf erreur de notre part, nous n'avons pas eu l'occasion d'enregistrer de commande récente de votre part.</p>"
+                    f"<p>Nous aimerions échanger avec vous pour faire le point sur vos besoins et vous présenter nos dernières nouveautés.</p>"
+                    f"<p>Bien cordialement,<br>L'équipe commerciale</p>"
+                )
+            else:
+                if rec_explanation:
+                    body = (
+                        f"<p>Bonjour {partner_name},</p>"
+                        f"<p>{rec_explanation}</p>"
+                        f"<p>Nous restons à votre disposition pour échanger davantage.</p>"
+                        f"<p>Bien cordialement,<br>L'équipe SmartERP AI</p>"
+                    )
+                elif raw_subject:
+                    body = (
+                        f"<p>Bonjour {partner_name},</p>"
+                        f"<p>Nous vous contactons au sujet de : {raw_subject}.</p>"
+                        f"<p>N'hésitez pas à revenir vers nous pour toute information complémentaire.</p>"
+                        f"<p>Bien cordialement,<br>L'équipe commerciale</p>"
+                    )
+                else:
+                    raise OdooActionValidationError("Échec de personnalisation du contenu email — action non exécutée : le corps généré est trop générique ou non disponible.")
+        else:
+            body = raw_body
+            if "[Nom du client]" in body:
+                body = body.replace("[Nom du client]", partner_name)
+            elif "{partner_name}" in body:
+                body = body.replace("{partner_name}", partner_name)
+            elif body.startswith("<p>Bonjour,</p>") or body.startswith("Bonjour,"):
+                body = body.replace("<p>Bonjour,</p>", f"<p>Bonjour {partner_name},</p>", 1)
+                body = body.replace("Bonjour,", f"Bonjour {partner_name},", 1)
+
+        # Vérification ultime du garde-fou anti-régression sur le corps final généré
+        final_body_lower = body.lower()
+        if any(pat in final_body_lower for pat in FORBIDDEN_PATTERNS):
+            raise OdooActionValidationError("Échec de personnalisation du contenu email — action non exécutée : le corps généré est identique au template générique interdit.")
+
+        return subject, body
