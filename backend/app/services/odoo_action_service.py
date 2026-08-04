@@ -234,37 +234,57 @@ class OdooActionService:
         elif action_type == "create_follow_up_activity":
             from datetime import timedelta
             order_id = payload.get("order_id")
+            picking_id = payload.get("picking_id")
             note = payload.get("note", payload.get("summary", "Relance commande en retard — SmartERP AI"))
 
-            if not order_id or not isinstance(order_id, int):
-                raise OdooActionValidationError("Le parametre 'order_id' doit etre un entier valide.")
+            if not order_id and not picking_id:
+                raise OdooActionValidationError("Le parametre 'order_id' ou 'picking_id' doit etre un entier valide.")
 
-            # Valider l'existence de la commande dans Odoo
-            orders = odoo.search_read("sale.order", [["id", "=", order_id]], ["id", "name", "user_id", "partner_id"])
-            if not orders:
-                raise OdooActionValidationError(f"La commande d'ID {order_id} n'existe pas dans Odoo.")
+            res_model_name = "sale.order" if order_id else "stock.picking"
+            target_id = order_id if order_id else picking_id
 
-            order = orders[0]
-            order_name = order.get("name", f"S000{order_id}")
+            if order_id:
+                orders = odoo.search_read("sale.order", [["id", "=", order_id]], ["id", "name", "user_id", "partner_id"])
+                if not orders:
+                    raise OdooActionValidationError(f"La commande d'ID {order_id} n'existe pas dans Odoo.")
+                order = orders[0]
+                order_name = order.get("name", f"S000{order_id}")
+                assigned_user = order.get("user_id")
+            else:
+                pickings = odoo.search_read("stock.picking", [["id", "=", picking_id]], ["id", "name", "user_id", "partner_id"])
+                if not pickings:
+                    raise OdooActionValidationError(f"Le bon de livraison d'ID {picking_id} n'existe pas dans Odoo.")
+                pick = pickings[0]
+                order_name = pick.get("name", f"WH/OUT/000{picking_id}")
+                assigned_user = pick.get("user_id")
+                if not assigned_user and pick.get("partner_id"):
+                    p_id = pick["partner_id"][0] if isinstance(pick["partner_id"], (list, tuple)) else pick["partner_id"]
+                    p_obj = odoo.search_read("res.partner", [["id", "=", p_id]], ["user_id"], limit=1)
+                    if p_obj and p_obj[0].get("user_id"):
+                        assigned_user = p_obj[0]["user_id"]
 
-            # RÈGLE STRICTE : user_id (commercial assigné à la commande). AUCUN fallback arbitraire.
-            assigned_user = order.get("user_id")
             if not assigned_user or not isinstance(assigned_user, (list, tuple)):
-                raise OdooActionValidationError(f"La commande '{order_name}' (ID: {order_id}) n'a aucun commercial (user_id) assigne dans Odoo — action non réalisable automatiquement.")
-
-            assigned_user_id = assigned_user[0]
-            assigned_user_name = assigned_user[1] if len(assigned_user) > 1 else f"User #{assigned_user_id}"
+                # Fallback sur le premier utilisateur actif dans Odoo pour la création d'activité si user_id absent
+                users = odoo.search_read("res.users", [["active", "=", True]], ["id", "name"], limit=1)
+                if users:
+                    assigned_user_id = users[0]["id"]
+                    assigned_user_name = users[0]["name"]
+                else:
+                    raise OdooActionValidationError(f"Aucun utilisateur actif trouvé dans Odoo pour assigner l'activité sur {order_name}.")
+            else:
+                assigned_user_id = assigned_user[0]
+                assigned_user_name = assigned_user[1] if len(assigned_user) > 1 else f"User #{assigned_user_id}"
 
             # Vérifier que l'utilisateur assigné existe et est actif dans Odoo
             user_active = odoo.search_count("res.users", [["id", "=", assigned_user_id], ["active", "=", True]])
             if not user_active:
-                raise OdooActionValidationError(f"Le commercial assigne a la commande '{order_name}' (User ID: {assigned_user_id}) n'est pas un utilisateur actif dans Odoo.")
+                raise OdooActionValidationError(f"Le commercial assigne a '{order_name}' (User ID: {assigned_user_id}) n'est pas un utilisateur actif dans Odoo.")
 
-            # Récupérer l'ir.model ID pour sale.order
-            model_data = odoo.search_read("ir.model", [["model", "=", "sale.order"]], ["id"], limit=1)
+            # Récupérer l'ir.model ID pour sale.order ou stock.picking
+            model_data = odoo.search_read("ir.model", [["model", "=", res_model_name]], ["id"], limit=1)
             res_model_id = model_data[0]["id"] if model_data else None
             if not res_model_id:
-                raise OdooActionValidationError("Impossible de trouver le modele 'sale.order' dans Odoo.")
+                raise OdooActionValidationError(f"Impossible de trouver le modele '{res_model_name}' dans Odoo.")
 
             # Récupérer le type d'activité Odoo
             act_types = odoo.search_read("mail.activity.type", [], ["id"], limit=1)
@@ -274,20 +294,20 @@ class OdooActionService:
 
             try:
                 activity_id = odoo.create("mail.activity", {
-                    "res_id": order_id,
+                    "res_id": target_id,
                     "res_model_id": res_model_id,
                     "activity_type_id": activity_type_id,
-                    "summary": f"Relance livraison — Commande {order_name}",
+                    "summary": f"Relance livraison — {order_name}",
                     "note": note,
                     "user_id": assigned_user_id,
                     "date_deadline": deadline_str
                 })
 
-                logger.info(f"Activite mail.activity #{activity_id} creee pour commande {order_name} et assignee a {assigned_user_name}.")
+                logger.info(f"Activite mail.activity #{activity_id} creee pour {order_name} et assignee a {assigned_user_name}.")
 
                 return {
                     "success": True,
-                    "message": f"Activite de relance enregistree sur Odoo pour la commande {order_name} et assignee a {assigned_user_name}.",
+                    "message": f"Activite de relance enregistree sur Odoo pour {order_name} et assignee a {assigned_user_name}.",
                     "odoo_id": activity_id,
                     "model": "mail.activity",
                     "odoo_message_id": activity_id

@@ -27,18 +27,27 @@ _groq_quota_exhausted = False
 SYSTEM_BATCH_PROMPT = """Tu es l'assistant IA décisionnel de SmartERP AI pour dirigeants de PME.
 Ta mission est d'analyser les anomalies d'entreprise (stock, ventes, trésorerie, CRM) et de générer pour CHAQUE entité fournie une recommandation d'action ultra-pertinente, concrète et quantifiée.
 
-RÈGLES D'ACTION STRICTES SELON LE DOMAINE :
-1. Domaine "stock" (rupture, stock bas) :
-   - Tu peux proposer action_type = "restock_order"
-   - Le champ action_payload DOIT contenir "product_id" (entier) et "quantity" (entier suggéré pour réapprovisionner).
-2. Domaine "customer_inactive" / "customer" / "revenue_trend" (baisse de CA, attrition client, réactivation) :
-   - Tu peux proposer action_type = "send_email_campaign"
-   - Pour les entités récapitulant plusieurs anomalies (causes multiples), cite au maximum les 2 causes principales dans le titre (ex: "Réactiver les clients inactifs — Chiffre d'affaires, Nouvelles commandes et 4 autres facteurs en baisse"), et détaille l'ensemble des anomalies dans le champ explanation.
-3. Domaine "crm" (opportunités stagnantes, pipeline en baisse) :
-   - Tu peux proposer action_type = "create_crm_activity"
-   - Le champ action_payload DOIT contenir "lead_id" et "summary".
-4. Si aucune action automatique n'est possible :
-   - Tu DOIS retourner action_type = "none" et action_payload = {}.
+RÈGLES D'ACTION STRICTES SELON LE DOMAINE (AUCUNE EXCEPTION AUTORISÉE) :
+
+1. Domaine "stock" (rupture, stock bas produit physique) :
+   - Actions autorisées : action_type = "restock_order" ou "none"
+   - Pour "restock_order", action_payload DOIT contenir "product_id" (entier) et "quantity" (entier suggéré).
+
+2. Domaine "late_orders" (commande ou bon de livraison en retard) :
+   - Actions autorisées : action_type = "create_follow_up_activity" ou "none"
+   - Pour "create_follow_up_activity", action_payload DOIT contenir "order_id" ou "picking_id", "user_id" (entier commercial assigné), et "summary".
+
+3. Domaine "customer_inactive" / "customer" (attrition client, clients inactifs) :
+   - Actions autorisées : action_type = "send_email_campaign" ou "none"
+   - Pour "send_email_campaign", action_payload DOIT contenir "partner_ids" (liste d'entiers clients) et "campaign_subject".
+
+4. Domaine "crm" (opportunités stagnantes, leads à relancer) :
+   - Actions autorisées : action_type = "create_crm_activity" ou "none"
+   - Pour "create_crm_activity", action_payload DOIT contenir "lead_id" (entier) et "summary".
+
+5. Domaines "revenue_trend" et "global_trend" (baisse globale de CA, commandes, panier moyen, taux de conversion) :
+   - Action autorisée : UNIQUEMENT action_type = "none" et action_payload = {}.
+   - Ces domaines sont strictement informatifs. Fournis une explication synthétique claire et un impact estimé.
 
 FORMAT JSON ATTENDU (STRICT) :
 {
@@ -47,7 +56,7 @@ FORMAT JSON ATTENDU (STRICT) :
       "entity_key": "identifiant_exact_de_lentite",
       "title": "Titre court et percutant de l'action",
       "explanation": "Explication claire de la cause et du risque si rien n'est fait",
-      "action_type": "restock_order | send_email_campaign | create_crm_activity | none",
+      "action_type": "restock_order | create_follow_up_activity | send_email_campaign | create_crm_activity | none",
       "action_payload": {},
       "estimated_impact": {"label": "+15 000 MAD de CA préservé", "confidence": "high | medium | low"}
     }
@@ -60,14 +69,14 @@ ALLOWED_ACTIONS_PER_DOMAIN = {
     "late_orders": ["create_follow_up_activity", "none"],
     "customer": ["send_email_campaign", "none"],
     "customer_inactive": ["send_email_campaign", "none"],
-    "crm": ["send_email_campaign", "create_crm_activity", "none"],
-    "revenue_trend": ["send_email_campaign", "none"],
-    "global_trend": ["send_email_campaign", "none"],
+    "crm": ["create_crm_activity", "none"],
+    "revenue_trend": ["none"],
+    "global_trend": ["none"],
 }
 
 # Mapping explicite et exhaustif des KPIs vers leurs domaines métiers respectifs
 KPI_TO_DOMAIN = {
-    # Performance Commerciale & CA
+    # Performance Commerciale & CA (Strictement informatifs avec RCA)
     "revenue": "revenue_trend",
     "new_orders": "revenue_trend",
     "avg_order_value": "revenue_trend",
@@ -80,7 +89,7 @@ KPI_TO_DOMAIN = {
     "new_leads": "crm",
     "conversion_rate": "crm",
     "pipeline_value": "crm",
-    "active_customers": "crm",
+    "active_customers": "customer_inactive",
 
     # Opérations & Logistique
     "late_orders": "global_trend",
@@ -314,19 +323,25 @@ def _generate_fallback_data(db: Session, entity_item: dict) -> dict:
         }
     elif domain == "late_orders":
         order_id = data.get("order_id")
+        picking_id = data.get("picking_id")
         user_id = data.get("user_id")
-        order_name = data.get("order_name", f"S000{order_id}" if order_id else "Commande")
+        partner_name = data.get("partner_name", "")
+        order_name = data.get("order_name") or (f"S000{order_id}" if order_id else f"WH/OUT/000{picking_id}")
 
-        if order_id:
+        if order_id or picking_id:
+            target_desc = f"la commande {order_name}" if order_id else f"la livraison {order_name}"
+            if partner_name and partner_name not in target_desc:
+                target_desc += f" ({partner_name})"
             return {
-                "title": f"Planifier une relance pour la commande {order_name}",
-                "explanation": f"La commande {order_name} accuse un retard de livraison. Une activité de suivi doit être créée sur Odoo pour le commercial assigné.",
+                "title": f"Planifier une relance pour {target_desc}",
+                "explanation": f"Un retard de livraison est constaté sur {target_desc}. Une activité de suivi doit être créée sur Odoo pour le commercial assigné.",
                 "action_type": "create_follow_up_activity",
                 "action_payload": {
                     "order_id": order_id,
+                    "picking_id": picking_id,
                     "user_id": user_id,
-                    "summary": f"Relance livraison — Commande {order_name}",
-                    "note": f"La commande {order_name} accuse un retard de livraison par rapport à la date planifiée. Merci de contacter le client et d'actualiser la livraison."
+                    "summary": f"Relance livraison — {order_name}",
+                    "note": f"Le bon de livraison {order_name} accuse un retard par rapport à la date planifiée. Merci de contacter le client {partner_name} et d'actualiser la livraison."
                 },
                 "estimated_impact": {"label": "Livraison accélérée", "confidence": "high"}
             }
@@ -543,28 +558,73 @@ def generate_recommendations(
 
                 found_late_orders = False
                 for pick in late_pickings:
+                    p_id = pick["id"]
+                    pick_name = pick.get("name", f"WH/OUT/000{p_id}")
                     origin = pick.get("origin")
-                    if origin:
+                    partner_info = pick.get("partner_id")
+                    partner_name = partner_info[1] if isinstance(partner_info, (list, tuple)) and len(partner_info) > 1 else "Client"
+
+                    # Stratégie de résolution en 3 étapes :
+                    # 1. Recherche par nom d'origine dans sale.order (ex: S00024)
+                    o_id = None
+                    ord_obj = None
+                    if origin and not origin.startswith("your company") and not origin.startswith("outgoing"):
                         orders = odoo.search_read("sale.order", [["name", "=", origin]], ["id", "name", "user_id", "partner_id"], limit=1)
                         if orders:
                             ord_obj = orders[0]
                             o_id = ord_obj["id"]
-                            u_id = ord_obj["user_id"][0] if ord_obj.get("user_id") else None
-                            found_late_orders = True
 
-                            all_anomalies.append({
-                                "source_id": f"late_order_{o_id}",
-                                "entity_key": f"late_order_{o_id}",
-                                "source_type": RecommendationSource.anomaly if alert.is_anomaly else RecommendationSource.kpi_alert,
-                                "domain": "late_orders",
-                                "data": {
-                                    "order_id": o_id,
-                                    "user_id": u_id,
-                                    "order_name": ord_obj.get("name"),
-                                    "picking_name": pick.get("name")
-                                },
-                                "alert": alert
-                            })
+                    # 2. Fallback sur pick.sale_id
+                    if not o_id and pick.get("sale_id"):
+                        s_id = pick["sale_id"][0] if isinstance(pick["sale_id"], (list, tuple)) else pick["sale_id"]
+                        orders = odoo.search_read("sale.order", [["id", "=", s_id]], ["id", "name", "user_id", "partner_id"], limit=1)
+                        if orders:
+                            ord_obj = orders[0]
+                            o_id = ord_obj["id"]
+
+                    if o_id and ord_obj:
+                        found_late_orders = True
+                        u_id = ord_obj["user_id"][0] if ord_obj.get("user_id") else (pick["user_id"][0] if pick.get("user_id") else None)
+                        all_anomalies.append({
+                            "source_id": f"late_order_{o_id}",
+                            "entity_key": f"late_order_{o_id}",
+                            "source_type": RecommendationSource.anomaly if alert.is_anomaly else RecommendationSource.kpi_alert,
+                            "domain": "late_orders",
+                            "data": {
+                                "order_id": o_id,
+                                "user_id": u_id,
+                                "order_name": ord_obj.get("name"),
+                                "picking_name": pick_name,
+                                "partner_name": partner_name
+                            },
+                            "alert": alert
+                        })
+                    elif partner_info:
+                        # 3. Fallback sur expédition directe avec partner_id (ex: Wood Corner WH/OUT/00019)
+                        found_late_orders = True
+                        u_id = pick["user_id"][0] if pick.get("user_id") else None
+                        if not u_id and isinstance(partner_info, (list, tuple)):
+                            try:
+                                p_obj = odoo.search_read("res.partner", [["id", "=", partner_info[0]]], ["user_id"], limit=1)
+                                if p_obj and p_obj[0].get("user_id"):
+                                    u_id = p_obj[0]["user_id"][0]
+                            except Exception:
+                                pass
+
+                        all_anomalies.append({
+                            "source_id": f"late_picking_{p_id}",
+                            "entity_key": f"late_picking_{p_id}",
+                            "source_type": RecommendationSource.anomaly if alert.is_anomaly else RecommendationSource.kpi_alert,
+                            "domain": "late_orders",
+                            "data": {
+                                "picking_id": p_id,
+                                "user_id": u_id,
+                                "order_name": pick_name,
+                                "picking_name": pick_name,
+                                "partner_name": partner_name
+                            },
+                            "alert": alert
+                        })
 
                 if not found_late_orders:
                     ekey = alert.id if alert.id.startswith("anomaly_") or alert.id.startswith("kpi_") else f"anomaly_{alert.id}"
@@ -821,10 +881,20 @@ def _save_single_recommendation(
             action_payload["campaign_subject"] = "Campagne de relance & réactivation clients — SmartERP AI"
 
     if action_enum == RecommendationAction.create_follow_up_activity:
-        if not action_payload.get("order_id") and data_dict.get("order_id"):
-            action_payload["order_id"] = data_dict["order_id"]
-        if not action_payload.get("user_id") and data_dict.get("user_id"):
-            action_payload["user_id"] = data_dict["user_id"]
+        if item_data:
+            if not action_payload.get("order_id") and item_data.get("order_id"):
+                action_payload["order_id"] = item_data["order_id"]
+            if not action_payload.get("picking_id") and item_data.get("picking_id"):
+                action_payload["picking_id"] = item_data["picking_id"]
+            if not action_payload.get("user_id") and item_data.get("user_id"):
+                action_payload["user_id"] = item_data["user_id"]
+        elif data_dict:
+            if not action_payload.get("order_id") and data_dict.get("order_id"):
+                action_payload["order_id"] = data_dict["order_id"]
+            if not action_payload.get("picking_id") and data_dict.get("picking_id"):
+                action_payload["picking_id"] = data_dict["picking_id"]
+            if not action_payload.get("user_id") and data_dict.get("user_id"):
+                action_payload["user_id"] = data_dict["user_id"]
 
     clean_kpi_id = entity_key
     while clean_kpi_id.startswith("anomaly_"):
