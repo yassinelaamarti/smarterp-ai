@@ -160,44 +160,43 @@ class OdooActionService:
             }
 
         elif action_type == "create_crm_activity":
-            partner_id = payload.get("partner_id") or payload.get("lead_id")  # support des deux clés pour la compatibilité
-            assigned_user_id = payload.get("assigned_user_id")
+            lead_id = payload.get("lead_id") or payload.get("partner_id")
+            assigned_user_id = payload.get("assigned_user_id") or payload.get("user_id")
             activity_type = payload.get("activity_type", "Todo")
-            note = payload.get("note", payload.get("activity_description", "Activité SmartERP AI"))
+            note = payload.get("note", payload.get("activity_description", payload.get("summary", "Activité SmartERP AI")))
 
-            if not partner_id or not isinstance(partner_id, int):
-                raise OdooActionValidationError("Le parametre 'partner_id' ou 'lead_id' doit etre un entier valide.")
+            if not lead_id or not isinstance(lead_id, int):
+                raise OdooActionValidationError("Le parametre 'lead_id' ou 'partner_id' doit etre un entier valide.")
             if not note or not isinstance(note, str):
                 raise OdooActionValidationError("La note ou description d'activite doit etre une chaine valide.")
 
-            # Si assigned_user_id n'est pas fourni, on prend l'utilisateur Odoo actif correspondant au username
+            # Si assigned_user_id n'est pas fourni, prendre le premier utilisateur actif
             if not assigned_user_id:
-                # Fallback à l'ID 1 ou premier utilisateur actif
                 users_odoo = odoo.search_read("res.users", [["active", "=", True]], ["id"], limit=1)
                 assigned_user_id = users_odoo[0]["id"] if users_odoo else 1
 
-            # Vérifier que l'utilisateur assigné existe et est actif
+            # Vérifier que l'utilisateur assigné existe et est actif dans Odoo
             user_exists = odoo.search_count("res.users", [["id", "=", assigned_user_id], ["active", "=", True]])
             if not user_exists:
                 raise OdooActionValidationError(f"L'utilisateur Odoo assigne (ID: {assigned_user_id}) n'existe pas ou n'est pas actif.")
 
-            # Trouver ou créer le lead/opportunité correspondant au partenaire
-            # On vérifie d'abord si l'ID fourni est déjà un crm.lead
-            is_lead = odoo.search_count("crm.lead", [["id", "=", partner_id]])
+            # Valider que le lead/opportunité existe dans Odoo
+            is_lead = odoo.search_count("crm.lead", [["id", "=", lead_id]])
             if is_lead > 0:
-                lead_id = partner_id
+                target_lead_id = lead_id
             else:
-                # Sinon on cherche un lead lié à ce partner_id
-                leads = odoo.search_read("crm.lead", [["partner_id", "=", partner_id], ["active", "=", True]], ["id"], limit=1)
+                # Sinon chercher un lead lié à ce partner_id
+                leads = odoo.search_read("crm.lead", [["partner_id", "=", lead_id], ["active", "=", True]], ["id"], limit=1)
                 if leads:
-                    lead_id = leads[0]["id"]
+                    target_lead_id = leads[0]["id"]
                 else:
-                    # Créer un lead en draft pour ce partenaire
-                    partner_info = odoo.search_read("res.partner", [["id", "=", partner_id]], ["name"], limit=1)
-                    partner_name = partner_info[0]["name"] if partner_info else f"Partenaire #{partner_id}"
-                    lead_id = odoo.create("crm.lead", {
+                    partner_info = odoo.search_read("res.partner", [["id", "=", lead_id]], ["name"], limit=1)
+                    if not partner_info:
+                        raise OdooActionValidationError(f"Le lead ou partenaire d'ID {lead_id} n'existe pas dans Odoo.")
+                    partner_name = partner_info[0]["name"]
+                    target_lead_id = odoo.create("crm.lead", {
                         "name": f"Opportunite IA - {partner_name}",
-                        "partner_id": partner_id,
+                        "partner_id": lead_id,
                         "type": "opportunity",
                         "user_id": assigned_user_id
                     })
@@ -220,9 +219,9 @@ class OdooActionService:
                     act_types = odoo.search_read("mail.activity.type", [], ["id"], limit=1)
                     activity_type_id = act_types[0]["id"] if act_types else 1
 
-                # Créer l'activité Odoo
+                # Créer l'activité Odoo sur crm.lead
                 activity_id = odoo.create("mail.activity", {
-                    "res_id": lead_id,
+                    "res_id": target_lead_id,
                     "res_model_id": res_model_id,
                     "activity_type_id": activity_type_id,
                     "summary": "Suivi SmartERP AI",
