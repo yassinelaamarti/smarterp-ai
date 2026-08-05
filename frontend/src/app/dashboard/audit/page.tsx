@@ -84,9 +84,15 @@ export default function AuditPage() {
 
       // 2. Filtre par statut
       if (selectedStatus !== "all") {
-        if (selectedStatus === "success" && (!log.success || log.actionType === "none")) return false;
-        if (selectedStatus === "acknowledged" && log.actionType !== "none") return false;
-        if (selectedStatus === "failed" && log.success) return false;
+        const isDismissed = log.status === "dismissed" || log.success === null || log.odooResult?.info?.includes("ignorée");
+        const isFailed = (log.status === "failed" || log.success === false) && !isDismissed;
+        const isExecuted = (log.status === "executed" || log.success === true) && !isDismissed && log.actionType !== "none";
+        const isAcknowledged = log.actionType === "none" || log.status === "acknowledged";
+
+        if (selectedStatus === "success" && !isExecuted) return false;
+        if (selectedStatus === "dismissed" && !isDismissed) return false;
+        if (selectedStatus === "acknowledged" && !isAcknowledged) return false;
+        if (selectedStatus === "failed" && !isFailed) return false;
       }
 
       // 3. Filtre par période
@@ -119,23 +125,28 @@ export default function AuditPage() {
 
   // Statistiques rapides exactes et cohérentes à 100%
   const stats = useMemo(() => {
-    if (!auditLogs) return { total: 0, successCount: 0, failedCount: 0, acknowledgedCount: 0 };
+    if (!auditLogs) return { total: 0, successCount: 0, dismissedCount: 0, failedCount: 0, acknowledgedCount: 0 };
+
     return {
       total: auditLogs.length,
-      successCount: auditLogs.filter((l) => l.success && l.actionType !== "none").length,
-      acknowledgedCount: auditLogs.filter((l) => l.actionType === "none").length,
-      failedCount: auditLogs.filter((l) => !l.success).length,
+      successCount: auditLogs.filter((l) => (l.status === "executed" || l.success === true) && l.status !== "dismissed" && l.success !== null && !l.odooResult?.info?.includes("ignorée") && l.actionType !== "none").length,
+      dismissedCount: auditLogs.filter((l) => l.status === "dismissed" || l.success === null || l.odooResult?.info?.includes("ignorée")).length,
+      acknowledgedCount: auditLogs.filter((l) => l.actionType === "none" || l.status === "acknowledged").length,
+      failedCount: auditLogs.filter((l) => (l.status === "failed" || l.success === false) && l.status !== "dismissed" && l.success !== null && !l.odooResult?.info?.includes("ignorée")).length,
     };
   }, [auditLogs]);
 
   // Gestion des clics sur les cartes KPI pour filtrer automatiquement
-  const applyQuickFilter = (type: "all" | "success" | "acknowledged" | "failed") => {
+  const applyQuickFilter = (type: "all" | "success" | "dismissed" | "acknowledged" | "failed") => {
     if (type === "all") {
       setSelectedActionType("all");
       setSelectedStatus("all");
     } else if (type === "success") {
       setSelectedActionType("all");
       setSelectedStatus("success");
+    } else if (type === "dismissed") {
+      setSelectedActionType("all");
+      setSelectedStatus("dismissed");
     } else if (type === "acknowledged") {
       setSelectedActionType("none");
       setSelectedStatus("all");
@@ -179,9 +190,19 @@ export default function AuditPage() {
     }
   };
 
-  // Badge d'impact réel (post-exécution)
+  // Badge d'impact réel (post-exécution ou rejet)
   const getHonestImpactBadge = (log: any) => {
-    if (!log.success) {
+    const isDismissed = log.status === "dismissed" || log.success === null || log.success === undefined || log.odooResult?.info?.includes("ignorée");
+    if (isDismissed) {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 border border-slate-200 px-2.5 py-0.5 text-2xs font-bold text-slate-600">
+          <XCircle className="h-3 w-3 text-slate-400 shrink-0" />
+          Ignorée
+        </span>
+      );
+    }
+
+    if (log.status === "failed" || log.success === false) {
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-red-50 border border-red-200 px-2.5 py-0.5 text-2xs font-bold text-red-700">
           <XCircle className="h-3 w-3 text-red-600 shrink-0" />
@@ -243,8 +264,17 @@ export default function AuditPage() {
   const renderBusinessDescription = (log: any) => {
     const p = log.actionPayload || {};
     const odooRes = log.odooResult || {};
+    const isDismissed = log.status === "dismissed" || log.success === null || log.success === undefined || odooRes.info?.includes("ignorée");
 
-    if (!log.success) {
+    if (isDismissed) {
+      return (
+        <span className="text-slate-500 leading-relaxed italic">
+          Recommandation ignorée par l'utilisateur — aucune action exécutée sur Odoo.
+        </span>
+      );
+    }
+
+    if (log.status === "failed" || log.success === false) {
       return (
         <div className="flex items-start gap-1.5 text-red-700 font-medium leading-relaxed">
           <AlertTriangle className="h-3.5 w-3.5 text-red-600 shrink-0 mt-0.5" />
@@ -334,7 +364,7 @@ export default function AuditPage() {
       )}
 
       {/* Cartes d'indicateurs de gouvernance intéractives */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
         <button
           onClick={() => applyQuickFilter("all")}
           className={`text-left rounded-2xl border p-4 shadow-xs transition-all cursor-pointer ${
@@ -357,6 +387,18 @@ export default function AuditPage() {
         >
           <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">Actions Odoo Exécutées</div>
           <div className="mt-2 text-xl font-extrabold text-emerald-800">{stats.successCount}</div>
+        </button>
+
+        <button
+          onClick={() => applyQuickFilter("dismissed")}
+          className={`text-left rounded-2xl border p-4 shadow-xs transition-all cursor-pointer ${
+            selectedStatus === "dismissed"
+              ? "border-slate-500 bg-slate-200/60 ring-2 ring-slate-400/20"
+              : "border-slate-200 bg-slate-50/50 hover:bg-slate-100/60"
+          }`}
+        >
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-600">Recommandations Ignorées</div>
+          <div className="mt-2 text-xl font-extrabold text-slate-800">{stats.dismissedCount}</div>
         </button>
 
         <button
@@ -423,6 +465,7 @@ export default function AuditPage() {
             >
               <option value="all">Tous les statuts</option>
               <option value="success">Exécutée (Succès)</option>
+              <option value="dismissed">Ignorée (Sans écriture Odoo)</option>
               <option value="acknowledged">Reconnue (Consultation)</option>
               <option value="failed">Échouée</option>
             </select>

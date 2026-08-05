@@ -37,7 +37,7 @@ class AIRecommendationAuditSchema(BaseModel):
     executed_by_name: Optional[str] = None
     executed_at: Optional[datetime] = None
     created_at: datetime
-    success: bool
+    success: Optional[bool] = None
     error_message: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)

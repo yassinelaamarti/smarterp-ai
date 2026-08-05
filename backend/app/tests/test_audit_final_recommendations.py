@@ -374,6 +374,47 @@ class TestAuditFinalRecommendations(unittest.TestCase):
         self.assertIsNotNone(action_log)
         self.assertTrue(action_log.success)
 
+    def test_dismiss_recommendation_creates_action_log_with_success_none(self):
+        """Vérifie que l'archivage/dismiss d'une recommandation crée un log AIActionLog avec success=None (et non True)."""
+        rec = AIRecommendation(
+            id=uuid.uuid4(),
+            tenant_id=self.tenant_id,
+            source_type=RecommendationSource.kpi_alert,
+            source_id="test_dismiss",
+            title="Test Dismiss",
+            explanation="Explication test dismiss",
+            action_type=RecommendationAction.create_crm_activity,
+            action_payload={"lead_id": 10},
+            status=RecommendationStatus.pending
+        )
+        self.db.add(rec)
+        self.db.commit()
+
+        # Simuler le dismiss
+        rec.status = RecommendationStatus.dismissed
+        rec.executed_by = 1
+        rec.executed_at = datetime.utcnow()
+
+        log = AIActionLog(
+            id=uuid.uuid4(),
+            recommendation_id=rec.id,
+            tenant_id=rec.tenant_id,
+            action_type=rec.action_type,
+            action_payload=rec.action_payload,
+            odoo_result={"info": "Recommandation ignorée par l'utilisateur, aucune action exécutée sur Odoo"},
+            executed_by=1,
+            executed_at=datetime.utcnow(),
+            success=None,
+            error_message=None
+        )
+        self.db.add(log)
+        self.db.commit()
+
+        fetched_log = self.db.query(AIActionLog).filter(AIActionLog.recommendation_id == rec.id).first()
+        self.assertIsNotNone(fetched_log)
+        self.assertIsNone(fetched_log.success, "Le log de dismiss doit avoir success=None en base de données")
+        self.assertEqual(rec.status, RecommendationStatus.dismissed)
+
     @patch("app.services.recommendation_generator.odoo")
     @patch("app.services.recommendation_generator._client")
     def test_domain_preserved_after_multi_cause_fusion(self, mock_groq, mock_odoo):

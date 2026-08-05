@@ -59,7 +59,14 @@ def get_recommendations_audit(
         source_type = rec.source_type.value if rec else "anomaly"
         estimated_impact = rec.estimated_impact if rec else None
         created_at = rec.created_at if rec else log.executed_at
-        status = rec.status.value if rec else ("executed" if log.success else "failed")
+        if rec and rec.status:
+            status = rec.status.value
+        elif log.success is True:
+            status = "executed"
+        elif log.success is None:
+            status = "dismissed"
+        else:
+            status = "failed"
 
         audit_data.append({
             "id": log.id,
@@ -189,10 +196,10 @@ def dismiss_recommendation(
         tenant_id=rec.tenant_id,
         action_type=rec.action_type,
         action_payload=rec.action_payload,
-        odoo_result={"info": "Recommandation ignorée par l'utilisateur"},
+        odoo_result={"info": "Recommandation ignorée par l'utilisateur, aucune action exécutée sur Odoo"},
         executed_by=current_user.id,
         executed_at=datetime.utcnow(),
-        success=True,
+        success=None,
         error_message=None
     )
     db.add(log)

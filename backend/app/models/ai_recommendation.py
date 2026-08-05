@@ -75,5 +75,5 @@ class AIActionLog(Base):
     odoo_result = Column(JSON, nullable=True)  # réponse brute de l'ERP Odoo
     executed_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     executed_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
-    success = Column(Boolean, nullable=False)
+    success = Column(Boolean, nullable=True)
     error_message = Column(Text, nullable=True)

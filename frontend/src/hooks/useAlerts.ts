@@ -20,16 +20,17 @@ export interface AlertSourceData {
 export interface Alert {
   id: string;
   kpiId: string;
-  severity: "warning" | "critical";
+  severity: "info" | "warning" | "critical";
   message: string;
   isAnomaly: boolean;
+  isPositiveTrend?: boolean;
   sourceData?: AlertSourceData;
 }
 
 interface AlertApiResponse {
   id: string;
   kpi_id: string;
-  severity: "warning" | "critical";
+  severity: "info" | "warning" | "critical";
   message: string;
   is_anomaly: boolean;
   source_data?: {

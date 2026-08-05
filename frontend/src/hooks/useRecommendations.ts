@@ -28,6 +28,7 @@ export interface AIRecommendationAudit {
   title: string;
   actionType: string;
   actionPayload?: Record<string, any>;
+  odooResult?: Record<string, any>;
   estimatedImpact?: {
     label: string;
     confidence: "low" | "medium" | "high";
@@ -36,7 +37,7 @@ export interface AIRecommendationAudit {
   executedByName?: string;
   executedAt?: string;
   createdAt: string;
-  success?: boolean;
+  success?: boolean | null;
   errorMessage?: string;
 }
 
@@ -67,6 +68,7 @@ interface AuditApiResponse {
   title: string;
   action_type: string;
   action_payload?: Record<string, any>;
+  odoo_result?: Record<string, any>;
   estimated_impact?: {
     label: string;
     confidence: "low" | "medium" | "high";
@@ -75,7 +77,7 @@ interface AuditApiResponse {
   executed_by_name?: string;
   executed_at?: string;
   created_at: string;
-  success?: boolean;
+  success?: boolean | null;
   error_message?: string;
 }
 
@@ -108,6 +110,7 @@ async function fetchAudit(): Promise<AIRecommendationAudit[]> {
     title: r.title,
     actionType: r.action_type,
     actionPayload: r.action_payload,
+    odooResult: r.odoo_result,
     estimatedImpact: r.estimated_impact,
     status: r.status,
     executedByName: r.executed_by_name,
