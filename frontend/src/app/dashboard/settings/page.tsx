@@ -116,6 +116,7 @@ export default function SettingsPage() {
     // Fallbacks si la clé n'est pas encore initialisée dans le state
     if (key === "unpaid_invoices_60_plus_warning") return { key, value: 20, label: "Impayés > 60j (Avertissement)" };
     if (key === "unpaid_invoices_60_plus_critical") return { key, value: 40, label: "Impayés > 60j (Critique)" };
+    if (key === "recommendation_acknowledgment_ttl_hours") return { key, value: 24, label: "Délai de rappel des recommandations acquittées" };
     return null;
   };
 
@@ -127,6 +128,11 @@ export default function SettingsPage() {
       const item = getSetting(k);
       return item !== null && item !== undefined ? item.value : defaultVal;
     };
+
+    // 0. Délai de rappel recommandations (>= 0.001h / ~3,6s)
+    if (getVal("recommendation_acknowledgment_ttl_hours", 24) < 0.001) {
+      errors.push("Rappel des recommandations : le délai doit être d'au moins 0.001 heure (~3,6 secondes).");
+    }
 
     // 1. Stock (Warning <= Critical)
     if (getVal("stock_warning", 0) > getVal("stock_critical", 10)) {
@@ -320,6 +326,7 @@ export default function SettingsPage() {
             {renderInput("stock_critical", "Stock critique (Critique)", "Seuil critique recommandé en cas de rupture de stock sur de nombreux produits.", "prod.")}
             {renderInput("late_orders_warning", "Commandes en retard (Avertissement)", "Alerte de surveillance pour le retard des bons de livraison.", "cmd.")}
             {renderInput("late_orders_critical", "Commandes en retard (Critique)", "Seuil d'urgence impactant fortement la satisfaction de vos clients.", "cmd.")}
+            {renderInput("recommendation_acknowledgment_ttl_hours", "Rappel des recommandations acquittées (Délai)", "Délai (en heures) après lequel une recommandation marquée comme lue repasse en attente si l'anomalie persiste sans résolution.", "heures")}
           </div>
         </div>
 

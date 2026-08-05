@@ -257,8 +257,10 @@ def _entity_needs_llm(db: Session, tenant_id: uuid.UUID, entity_item: dict) -> b
             return True
         return False
     elif domain in ("customer", "customer_inactive", "crm", "revenue_trend", "global_trend"):
-        old_val = existing.action_payload.get("value", 0)
+        old_val = existing.action_payload.get("value", 0) if existing.action_payload else 0
         new_val = data.get("amount", data.get("value", 0))
+        if old_val == 0 and new_val == 0:
+            return False
         if old_val == 0 or abs(new_val - old_val) / max(abs(old_val), 1.0) >= 0.15:
             return True
         return False
@@ -799,8 +801,6 @@ def generate_recommendations(
                 AIRecommendation.status.in_([RecommendationStatus.pending, RecommendationStatus.acknowledged])
             ).first()
             if existing:
-                if existing.status == RecommendationStatus.acknowledged:
-                    existing.status = RecommendationStatus.pending
                 existing.expires_at = datetime.utcnow() + timedelta(days=7)
                 db.commit()
                 continue
@@ -998,7 +998,26 @@ def _process_overflow_summary(
         db.commit()
 
 
+def _get_acknowledgment_ttl_hours(db: Session) -> float:
+    """Récupère le délai d'expiration/rappel des recommandations acquittées (en heures)."""
+    setting = db.query(AlertSetting).filter(AlertSetting.key == "recommendation_acknowledgment_ttl_hours").first()
+    if setting and setting.value and setting.value >= 0.001:
+        return float(setting.value)
+    ttl = getattr(settings, "recommendation_acknowledgment_ttl_hours", 24.0)
+    return max(float(ttl), 0.001)
+
+
 def _expire_obsolete_recommendations(db: Session, tenant_id: uuid.UUID, active_entity_keys: set[str]):
+    """
+    Gère le cycle de vie des recommandations :
+    1. Expire les cartes 'pending' ou 'acknowledged' dont l'anomalie a disparu.
+    2. Ré-escalade les cartes 'acknowledged' en 'pending' si le délai d'acquittement est dépassé
+       ET que l'anomalie est toujours active.
+    """
+    ttl_hours = _get_acknowledgment_ttl_hours(db)
+    now = datetime.utcnow()
+
+    # 1. Cartes pending : expirent si l'anomalie n'est plus dans active_entity_keys
     pending_recs = db.query(AIRecommendation).filter(
         AIRecommendation.tenant_id == tenant_id,
         AIRecommendation.status == RecommendationStatus.pending
@@ -1007,6 +1026,27 @@ def _expire_obsolete_recommendations(db: Session, tenant_id: uuid.UUID, active_e
     for rec in pending_recs:
         if rec.entity_key not in active_entity_keys:
             rec.status = RecommendationStatus.expired
-            logger.info(f"Recommandation expirée automatiquement : entity_key={rec.entity_key}")
+            logger.info(f"Recommandation expirée automatiquement (anomalie résolue) : entity_key={rec.entity_key}")
+
+    # 2. Cartes acknowledged :
+    # - Expirent si l'anomalie n'est plus dans active_entity_keys
+    # - Repassent en 'pending' si le délai configuré s'est écoulé depuis le dernier acquittement
+    acknowledged_recs = db.query(AIRecommendation).filter(
+        AIRecommendation.tenant_id == tenant_id,
+        AIRecommendation.status == RecommendationStatus.acknowledged
+    ).all()
+
+    for rec in acknowledged_recs:
+        if rec.entity_key not in active_entity_keys:
+            rec.status = RecommendationStatus.expired
+            logger.info(f"Recommandation acquittée expirée (anomalie résolue) : entity_key={rec.entity_key}")
+        else:
+            ack_time = rec.acknowledged_at or rec.created_at
+            if ack_time and (now - ack_time) >= timedelta(hours=ttl_hours):
+                rec.status = RecommendationStatus.pending
+                logger.info(
+                    f"Recommandation acquittée ré-escaladée en pending suite à l'expiration du délai ({ttl_hours}h) "
+                    f"avec anomalie toujours active : entity_key={rec.entity_key}"
+                )
 
     db.commit()

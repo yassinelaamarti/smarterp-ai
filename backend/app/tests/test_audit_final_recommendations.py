@@ -262,6 +262,89 @@ class TestAuditFinalRecommendations(unittest.TestCase):
         self.db.refresh(rec)
         self.assertEqual(rec.status, RecommendationStatus.pending, "La recommandation acquittée doit repasser en pending suite à une aggravation critique")
 
+    @patch("app.services.recommendation_generator.odoo")
+    @patch("app.services.recommendation_generator._client")
+    def test_06b_acknowledged_time_based_re_escalation(self, mock_groq, mock_odoo):
+        """Vérifie la ré-escalade temporelle indépendante d'une recommandation acquittée."""
+        from datetime import timedelta
+        # 1. Configurer un délai TTL de 24h
+        setting = AlertSetting(key="recommendation_acknowledgment_ttl_hours", value=24.0, label="Délai de rappel")
+        self.db.add(setting)
+
+        now = datetime.utcnow()
+        ack_25h_ago = now - timedelta(hours=25)
+        ack_2h_ago = now - timedelta(hours=2)
+
+        # Rec 1: Acquittée il y a 25h (> 24h) -> doit repasser en pending
+        rec1 = AIRecommendation(
+            id=uuid.uuid4(),
+            tenant_id=self.tenant_id,
+            entity_key="product_100",
+            source_type=RecommendationSource.kpi_alert,
+            source_id="stock_product_100",
+            title="Rec 100",
+            explanation="Explication",
+            action_type=RecommendationAction.restock_order,
+            action_payload={"product_id": 100, "quantity": 10},
+            status=RecommendationStatus.acknowledged,
+            acknowledged_at=ack_25h_ago
+        )
+
+        # Rec 2: Acquittée il y a 2h (< 24h) et anomalie toujours active (inchangée) -> doit RESTER en acknowledged
+        rec2 = AIRecommendation(
+            id=uuid.uuid4(),
+            tenant_id=self.tenant_id,
+            entity_key="product_200",
+            source_type=RecommendationSource.kpi_alert,
+            source_id="stock_product_200",
+            title="Rec 200",
+            explanation="Explication",
+            action_type=RecommendationAction.restock_order,
+            action_payload={"product_id": 200, "quantity": 1},
+            status=RecommendationStatus.acknowledged,
+            acknowledged_at=ack_2h_ago
+        )
+
+        # Rec 3: Acquittée il y a 25h mais anomalie DISPARUE -> doit passer en expired
+        rec3 = AIRecommendation(
+            id=uuid.uuid4(),
+            tenant_id=self.tenant_id,
+            entity_key="product_300",
+            source_type=RecommendationSource.kpi_alert,
+            source_id="stock_product_300",
+            title="Rec 300",
+            explanation="Explication",
+            action_type=RecommendationAction.restock_order,
+            action_payload={"product_id": 300, "quantity": 10},
+            status=RecommendationStatus.acknowledged,
+            acknowledged_at=ack_25h_ago
+        )
+
+        self.db.add_all([rec1, rec2, rec3])
+        self.db.commit()
+
+        # Odoo retourne les produits 100 et 200 comme actifs (stock bas 1 unité)
+        mock_odoo.search_read.return_value = [
+            {"id": 100, "name": "Produit 100", "qty_available": 1, "lst_price": 100.0},
+            {"id": 200, "name": "Produit 200", "qty_available": 1, "lst_price": 100.0},
+        ]
+        mock_completion = MagicMock()
+        mock_completion.choices = [
+            MagicMock(message=MagicMock(content='{"title": "Action", "explanation": "Exp", "action_type": "restock_order", "action_payload": {"product_id": 100, "quantity": 10}}'))
+        ]
+        mock_groq.chat.completions.create.return_value = mock_completion
+
+        alert = Alert(id="stock_alerts", kpi_id="stock_alerts", message="Stock bas", severity="warning", is_anomaly=False, timestamp=now)
+        generate_recommendations(self.db, [alert], tenant_id=self.tenant_id)
+
+        self.db.refresh(rec1)
+        self.db.refresh(rec2)
+        self.db.refresh(rec3)
+
+        self.assertEqual(rec1.status, RecommendationStatus.pending, "Rec1 (25h > 24h) avec anomalie active doit repasser en pending")
+        self.assertEqual(rec2.status, RecommendationStatus.acknowledged, "Rec2 (2h < 24h) sans aggravation doit rester en acknowledged")
+        self.assertEqual(rec3.status, RecommendationStatus.expired, "Rec3 (anomalie résolue) doit passer en expired")
+
     # ---------------------------------------------------------------------
     # B. GARDE-FOUS SUR LES TYPES D'ACTION & PARAMÈTRES
     # ---------------------------------------------------------------------
@@ -481,7 +564,7 @@ class TestAuditFinalRecommendations(unittest.TestCase):
         mock_odoo.search_read.return_value = products
 
         mock_completion = MagicMock()
-        mock_completion.choices = [MagicMock(message=MagicMock(content='{"title": "Action", "explanation": "Exp", "action_type": "none"}'))]
+        mock_completion.choices = [MagicMock(message=MagicMock(content='{"title": "Action", "explanation": "Exp", "action_type": "restock_order", "action_payload": {"product_id": 1, "quantity": 10}}'))]
         mock_groq.chat.completions.create.return_value = mock_completion
 
         alert = Alert(id="stock_alerts", kpi_id="stock_alerts", message="Stock bas", severity="warning", is_anomaly=False, timestamp=datetime.utcnow())
@@ -625,7 +708,7 @@ class TestAuditFinalRecommendations(unittest.TestCase):
     @patch("app.services.recommendation_generator.odoo")
     @patch("app.services.recommendation_generator._client")
     def test_all_score_health_anomalies_produce_a_card(self, mock_groq, mock_odoo):
-        """Étape 3 Test 3 : L'anomalie 'clients_actifs' produit obligatoirement domain='crm' et une carte de recommandation."""
+        """Étape 3 Test 3 : L'anomalie 'clients_actifs' produit obligatoirement domain='customer_inactive' et une carte de recommandation."""
         mock_groq.chat.completions.create.side_effect = Exception("Rate limit 429")
         alert = Alert(id="active_customers", kpi_id="active_customers", message="Hausse anormale détectée pour clients actifs", severity="critical", is_anomaly=True, timestamp=datetime.utcnow())
 
@@ -634,11 +717,11 @@ class TestAuditFinalRecommendations(unittest.TestCase):
         rec = self.db.query(AIRecommendation).filter(AIRecommendation.entity_key == "anomaly_active_customers").first()
         self.assertIsNotNone(rec, "L'anomalie active_customers doit obligatoirement produire une carte")
         domain_resolved = _resolve_domain_from_entity_key(rec.entity_key)
-        self.assertEqual(domain_resolved, "crm", "L'anomalie active_customers doit être résolue vers le domaine 'crm'")
+        self.assertEqual(domain_resolved, "customer_inactive", "L'anomalie active_customers doit être résolue vers le domaine 'customer_inactive'")
 
     def test_no_hardcoded_substring_matching_for_domain(self):
         """Étape 3 Test 4 : Vérifie que la résolution de domaine pour anomalies globales est déterministe et exacte."""
-        self.assertEqual(_resolve_domain_from_entity_key("anomaly_active_customers"), "crm")
+        self.assertEqual(_resolve_domain_from_entity_key("anomaly_active_customers"), "customer_inactive")
         self.assertEqual(_resolve_domain_from_entity_key("anomaly_revenue"), "revenue_trend")
         self.assertEqual(_resolve_domain_from_entity_key("anomaly_late_orders"), "global_trend")
         self.assertEqual(_resolve_domain_from_entity_key("anomaly_new_leads"), "crm")

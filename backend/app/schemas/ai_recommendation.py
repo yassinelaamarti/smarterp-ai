@@ -18,6 +18,7 @@ class AIRecommendationSchema(BaseModel):
     status: RecommendationStatus
     executed_by: Optional[int] = None
     executed_at: Optional[datetime] = None
+    acknowledged_at: Optional[datetime] = None
     created_at: datetime
     expires_at: Optional[datetime] = None
 

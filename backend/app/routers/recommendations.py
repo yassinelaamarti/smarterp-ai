@@ -225,6 +225,7 @@ def acknowledge_recommendation(
     rec.status = RecommendationStatus.acknowledged
     rec.executed_by = current_user.id
     rec.executed_at = datetime.utcnow()
+    rec.acknowledged_at = datetime.utcnow()
 
     log = AIActionLog(
         id=uuid.uuid4(),

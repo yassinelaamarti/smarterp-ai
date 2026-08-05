@@ -46,6 +46,7 @@ class AIRecommendation(Base):
     entity_key = Column(String(255), nullable=True, index=True)
     executed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     executed_at = Column(DateTime(timezone=True), nullable=True)
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True)
     failure_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=True)

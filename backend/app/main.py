@@ -57,7 +57,6 @@ async def lifespan(app: FastAPI):
                 db_mig.rollback()
 
         for col_name, col_type in [
-
             ("report_schedule", "VARCHAR DEFAULT 'none'"),
             ("report_email", "VARCHAR"),
             ("last_report_sent", "VARCHAR")
@@ -68,6 +67,13 @@ async def lifespan(app: FastAPI):
                 logger.info(f"Colonne {col_name} ajoutée avec succès à la table users.")
             except Exception:
                 db_mig.rollback()
+
+        try:
+            db_mig.execute(text("ALTER TABLE ai_recommendation ADD COLUMN acknowledged_at TIMESTAMPTZ"))
+            db_mig.commit()
+            logger.info("Colonne acknowledged_at ajoutée avec succès à la table ai_recommendation.")
+        except Exception:
+            db_mig.rollback()
     except Exception as e:
         logger.error(f"Erreur lors de la migration de la base de données: {e}")
     finally:
@@ -124,6 +130,7 @@ async def lifespan(app: FastAPI):
                 AlertSetting(key="pipeline_value_warning", value=-30.0, label="Seuil d'avertissement de baisse du pipeline CRM (%)"),
                 AlertSetting(key="active_customers_critical", value=-30.0, label="Seuil critique de baisse des clients actifs (%)"),
                 AlertSetting(key="active_customers_warning", value=-20.0, label="Seuil d'avertissement de baisse des clients actifs (%)"),
+                AlertSetting(key="recommendation_acknowledgment_ttl_hours", value=24.0, label="Délai de rappel des recommandations acquittées (heures)"),
             ]
             db.add_all(default_settings)
             db.commit()
@@ -141,6 +148,12 @@ async def lifespan(app: FastAPI):
                 db.add(AlertSetting(key="unpaid_invoices_60_plus_critical", value=40.0, label="Impayés >60j (Critique %)"))
                 db.commit()
                 logger.info("Added missing unpaid_invoices settings.")
+
+            ttl_setting = db.query(AlertSetting).filter(AlertSetting.key == "recommendation_acknowledgment_ttl_hours").first()
+            if not ttl_setting:
+                db.add(AlertSetting(key="recommendation_acknowledgment_ttl_hours", value=24.0, label="Délai de rappel des recommandations acquittées (heures)"))
+                db.commit()
+                logger.info("Added missing recommendation_acknowledgment_ttl_hours setting.")
 
 
         # Seeder l'historique de démo s'il est vide

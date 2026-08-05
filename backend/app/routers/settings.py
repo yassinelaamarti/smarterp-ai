@@ -30,6 +30,12 @@ def update_settings(
     try:
         updated_settings = []
         for setting in payload.settings:
+            if setting.key == "recommendation_acknowledgment_ttl_hours" and setting.value < 0.001:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Le délai de rappel des recommandations acquittées doit être supérieur ou égal à 0.001 heure (~3,6 secondes)."
+                )
+
             db_setting = db.query(AlertSetting).filter(AlertSetting.key == setting.key).first()
             if db_setting:
                 db_setting.value = setting.value

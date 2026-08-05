@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     # Synchronisation en arrière-plan
     sync_interval_seconds: int = 900
+    recommendation_acknowledgment_ttl_hours: float = 24.0
 
     # Agent IA (Groq)
     # llama-3.3-70b-versatile a été déprécié par Groq le 17 juin 2026.
