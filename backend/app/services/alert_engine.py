@@ -23,12 +23,9 @@ RuleResult = Optional[tuple[str, str]]  # (severity, message)
 
 
 def _check_stock_alerts(kpi: KPI, settings: dict[str, float]) -> RuleResult:
-    critical = settings.get("stock_critical", 10.0)
-    warning = settings.get("stock_warning", 0.0)
-    if kpi.value > critical:
-        return "critical", f"{int(kpi.value)} produits en stock critique — réapprovisionnement recommandé."
-    if kpi.value > warning:
-        return "warning", f"{int(kpi.value)} produit(s) en stock bas à surveiller."
+    critical_threshold = settings.get("stock_critical", 10.0)
+    if kpi.value > 0:
+        return "critical", f"{int(kpi.value)} produit(s) en stock critique (quantité <= {int(critical_threshold)}) — réapprovisionnement recommandé."
     return None
 
 
@@ -102,8 +99,7 @@ def evaluate_alerts(kpis: list[KPI], settings: dict[str, float] | None = None, d
         if kpi.id == "stock_alerts":
             result = _check_stock_alerts(kpi, settings)
             critical = settings.get("stock_critical", 10.0)
-            warning = settings.get("stock_warning", 0.0)
-            threshold_info = f"Seuils configurés : Critique > {critical}, Avertissement > {warning}"
+            threshold_info = f"Seuil configuré de stock critique : quantité par produit <= {critical}"
         elif kpi.id == "late_orders":
             result = _check_late_orders(kpi, settings)
             critical = settings.get("late_orders_critical", 5.0)

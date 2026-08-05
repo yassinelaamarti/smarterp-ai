@@ -23,6 +23,8 @@ def get_stock_critical_threshold(
             return float(settings_dict["stock_critical"])
         except (ValueError, TypeError):
             pass
+
+    # Si db est fourni et valide, l'utiliser exclusivement
     if db is not None and not hasattr(db, "_mock_name") and type(db).__name__ not in ("MagicMock", "Mock"):
         try:
             query_res = db.query(AlertSetting)
@@ -31,7 +33,22 @@ def get_stock_critical_threshold(
                 if setting and hasattr(setting, "value") and isinstance(getattr(setting, "value", None), (int, float)):
                     return float(setting.value)
         except Exception as e:
-            logger.warning(f"Impossible de lire 'stock_critical' depuis la DB: {e}")
+            logger.warning(f"Impossible de lire 'stock_critical' depuis la DB transmise: {e}")
+        return DEFAULT_STOCK_CRITICAL
+
+    # Fallback robuste : uniquement si db n'a PAS été transmis (db is None)
+    try:
+        from app.database import SessionLocal
+        temp_db = SessionLocal()
+        try:
+            setting = temp_db.query(AlertSetting).filter(AlertSetting.key == "stock_critical").first()
+            if setting and setting.value is not None:
+                return float(setting.value)
+        finally:
+            temp_db.close()
+    except Exception as e:
+        logger.warning(f"Impossible de lire 'stock_critical' via session DB temporaire: {e}")
+
     return DEFAULT_STOCK_CRITICAL
 
 

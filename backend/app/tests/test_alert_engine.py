@@ -77,9 +77,9 @@ class TestAlertEngine(unittest.TestCase):
             KPI(id="late_orders", label="Commandes en retard", value=6.0)
         ]
         alerts = evaluate_alerts(kpis, self.default_settings)
-        self.assertEqual(len(alerts), 2)
+        self.assertEqual(len(alerts), 3)
         kpi_ids = {a.kpi_id for a in alerts}
-        self.assertEqual(kpi_ids, {"revenue", "late_orders"})
+        self.assertEqual(kpi_ids, {"revenue", "stock_alerts", "late_orders"})
 
     @patch("app.services.alert_engine.current_month_str")
     def test_evaluate_alerts_anomaly_detected(self, mock_current_month_str):

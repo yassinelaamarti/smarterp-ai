@@ -42,9 +42,9 @@ def get_kpi_context(kpi_id: str, period: str = "month") -> dict:
 
     elif kpi_id == "stock_alerts":
         # Requête réelle des produits en alerte si nécessaire
-        from app.services.stock_service import get_critical_stock_products
+        from app.services.stock_service import fetch_critical_stock_products
         try:
-            items = get_critical_stock_products()
+            items = fetch_critical_stock_products(db=db)
             table_data = [{"name": p.get("name", "Produit"), "qty": p.get("qty_available", 0)} for p in items[:5]]
         except Exception:
             table_data = []

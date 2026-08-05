@@ -310,7 +310,7 @@ def get_unpaid_invoices_amount() -> float:
 # Assemblage des 11 KPIs Canoniques
 # ---------------------------------------------------------------------
 
-def get_kpis() -> list[KPI]:
+def get_kpis(db=None) -> list[KPI]:
     """Recalcule les 11 KPIs en interrogeant Odoo en direct."""
     try:
         revenue = get_monthly_revenue(30)
@@ -331,7 +331,7 @@ def get_kpis() -> list[KPI]:
         avg_order_value = 0.0
 
     try:
-        stock_alerts = get_stock_alerts_count()
+        stock_alerts = get_stock_alerts_count(db=db)
     except Exception as e:
         logger.error(f"Error calculating stock alerts count: {e}")
         stock_alerts = 0.0

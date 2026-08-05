@@ -53,7 +53,7 @@ def purge_orphan_kpi_cache(db: Session, dry_run: bool = False) -> list[str]:
 
 
 def sync_kpis(db: Session) -> list[KPI]:
-    kpis = odoo_kpi_reader.get_kpis()
+    kpis = odoo_kpi_reader.get_kpis(db=db)
     for kpi in kpis:
         db.merge(KPICache(id=kpi.id, label=kpi.label, value=kpi.value, unit=kpi.unit))
     db.commit()

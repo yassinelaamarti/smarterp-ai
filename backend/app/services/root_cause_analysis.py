@@ -296,14 +296,11 @@ def _run_real_rca_decomposition(
 
     # D. Alertes Stock Bas
     if kpi_id == "stock_alerts":
-        stock_prods = odoo.search_read(
-            "product.product",
-            [
-                ["type", "=", "product"],
-                ["qty_available", "<", 5],
-            ],
-            ["name", "categ_id", "qty_available"],
-        ) or []
+        from app.services.stock_service import fetch_critical_stock_products
+        try:
+            stock_prods = fetch_critical_stock_products()
+        except Exception:
+            stock_prods = []
 
         if not stock_prods:
             return None

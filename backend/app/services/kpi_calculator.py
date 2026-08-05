@@ -38,8 +38,8 @@ _KPI_SOURCE_META = {
     },
     "stock_alerts": {
         "model": "product.product",
-        "domain": "[('qty_available', '<', 5), ('type', '=', 'product')]",
-        "formula": "Nombre d'articles de type stockable dont la quantité en stock est inférieure à 5"
+        "domain": "[('qty_available', '<=', stock_critical), ('type', '=', 'product')]",
+        "formula": "Nombre d'articles de type stockable dont la quantité en stock est inférieure ou égale au seuil critique fixé"
     },
     "new_leads": {
         "model": "crm.lead",
@@ -150,7 +150,7 @@ def get_kpis() -> list[KPI]:
             # Calcul de la criticité dynamique
             criticality = "normal"
             if r.id == "stock_alerts":
-                criticality = "critical" if r.value > 10 else ("attention" if r.value > 0 else "normal")
+                criticality = "critical" if r.value > 0 else "normal"
             elif r.id == "late_orders":
                 criticality = "critical" if r.value > 5 else ("attention" if r.value > 0 else "normal")
             elif r.id in ("unpaid_invoices", "unpaid_invoices_count"):
