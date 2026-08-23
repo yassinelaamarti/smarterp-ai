@@ -16,7 +16,10 @@ from groq import Groq
 
 logger = logging.getLogger(__name__)
 
-_client = Groq(api_key=settings.groq_api_key)
+
+def _get_groq_client() -> Groq:
+    return Groq(api_key=settings.groq_api_key)
+
 
 DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
 MAX_INDIVIDUAL_RECOMMENDATIONS = 12
@@ -459,7 +462,8 @@ def _execute_batch_llm_call(entities_batch: list[dict], db: Session) -> dict[str
     for attempt in range(max_retries + 1):
         try:
             logger.info(f"Envoi d'un appel LLM BATCH pour {len(entities_batch)} entités (Tentative {attempt + 1})...")
-            completion = _client.chat.completions.create(
+            client = _get_groq_client()
+            completion = client.chat.completions.create(
                 model=settings.groq_model,
                 messages=[
                     {"role": "system", "content": SYSTEM_BATCH_PROMPT},

@@ -19,7 +19,11 @@ from app.models.alert_setting import AlertSetting
 
 logger = logging.getLogger(__name__)
 
-_client = Groq(api_key=settings.groq_api_key)
+
+def _get_client() -> Groq:
+    """Retourne une instance du client Groq basée sur les paramètres actuels."""
+    return Groq(api_key=settings.groq_api_key)
+
 
 _SYSTEM_PROMPT_TEMPLATE = """Tu es l'assistant analytique de SmartERP AI, une plateforme connectée à Odoo 17 \
 utilisée par une PME marocaine.
@@ -138,6 +142,10 @@ Voici les données d'entreprise en temps réel validées en cache Odoo 17 :
 
 
 def ask(message: str, history: list[dict] | None = None) -> str:
+    if not settings.groq_api_key or settings.groq_api_key in ("changeme", ""):
+        logger.error("Clé API Groq non renseignée (GROQ_API_KEY).")
+        return "⚠️ **Erreur de configuration Agent IA** : La clé API Groq (`GROQ_API_KEY`) n'est pas configurée dans votre fichier `.env`. Obtenez une clé gratuite sur https://console.groq.com et redémarrez le conteneur backend."
+
     context = _build_context()
     system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(context=context)
 
@@ -149,7 +157,8 @@ def ask(message: str, history: list[dict] | None = None) -> str:
     max_retries = 2
     for attempt in range(max_retries + 1):
         try:
-            completion = _client.chat.completions.create(
+            client = _get_client()
+            completion = client.chat.completions.create(
                 model=settings.groq_model,
                 messages=messages,
                 temperature=0.2,
@@ -160,6 +169,14 @@ def ask(message: str, history: list[dict] | None = None) -> str:
         except Exception as e:
             err_msg = str(e)
             logger.warning(f"Erreur lors de l'appel Agent Chat (Tentative {attempt + 1}/{max_retries + 1}): {err_msg}")
+
+            if "401" in err_msg or "invalid_api_key" in err_msg.lower() or "invalid api key" in err_msg.lower():
+                logger.error("Clé API Groq invalide.")
+                return f"⚠️ **Erreur d'authentification Groq** : La clé API `GROQ_API_KEY` est invalide. Vérifiez votre clé sur https://console.groq.com et redémarrez le backend (`docker compose restart backend`)."
+
+            if "404" in err_msg or ("model" in err_msg.lower() and "not" in err_msg.lower()):
+                logger.error(f"Modèle Groq non trouvé : {settings.groq_model}")
+                return f"⚠️ **Erreur de Modèle Groq** : Le modèle `{settings.groq_model}` n'existe pas ou n'est pas disponible. Assurez-vous d'avoir `GROQ_MODEL=llama-3.3-70b-versatile` dans votre `.env` et redémarrez le backend."
 
             if "Limit 100000" in err_msg or "tokens per day" in err_msg or "429" in err_msg or "TPD" in err_msg or "rate_limit" in err_msg.lower():
                 logger.error("Quota journalier Groq atteint (429/TPD) sur le Chat. Basculement sur le fallback déterministe.")
@@ -216,6 +233,10 @@ def generate_dashboard_summary() -> str:
     Génère un rapport de synthèse analytique et décisionnel complet de niveau exécutif.
     Intègre un mécanisme de retry et un fallback automatique en cas de rate limit (HTTP 429).
     """
+    if not settings.groq_api_key or settings.groq_api_key in ("changeme", ""):
+        logger.error("Clé API Groq non renseignée pour la synthèse.")
+        return generate_fallback_summary()
+
     context = _build_context()
     
     prompt = """En tant que Conseiller Stratégique Virtuel pour la Direction Générale d'une PME, rédige un rapport de synthèse analytique et décisionnel de niveau EXÉCUTIF (type Board Report) basé sur les données ci-dessous.
@@ -258,7 +279,8 @@ Voici les données validées en cache Odoo :
     max_retries = 2
     for attempt in range(max_retries + 1):
         try:
-            completion = _client.chat.completions.create(
+            client = _get_client()
+            completion = client.chat.completions.create(
                 model=settings.groq_model,
                 messages=messages,
                 temperature=0.25,
@@ -278,3 +300,4 @@ Voici les données validées en cache Odoo :
                 time.sleep((attempt + 1) * 1.5)
 
     return generate_fallback_summary()
+

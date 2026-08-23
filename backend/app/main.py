@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI):
             default_admin = User(
                 email="admin@smarterp.ai",
                 hashed_password=hashed_pw,
-                full_name="Yassine Laamarti",
+                full_name="Yassine",
                 role="admin",
                 is_active=True
             )
